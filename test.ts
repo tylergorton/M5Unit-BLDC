@@ -1,16 +1,28 @@
-unitBldc.connect(0x65)
-unitBldc.setMode(unitBldc.BldcMode.ClosedLoop)
-unitBldc.setDirection(unitBldc.BldcDirection.Forward)
-unitBldc.setPID(2, 0.5, 0)
-unitBldc.setRPM(1500)
+// One-time setup sketch: run this with ONLY ONE motor wired up to change its
+// address away from the factory default before wiring both motors together.
+// See README.md "Assigning addresses" section.
+//
+// let setup = unitBldc.connect(0x65)
+// setup.setI2CAddress(0x6A)
+// setup.saveMotorDataToFlash()
 
-let pid = unitBldc.getPID()
-basic.showString("Kp=" + pid[0] + " Ki=" + pid[1] + " Kd=" + pid[2])
 
-// or read a single term when you just want to confirm one value
-basic.showNumber(unitBldc.getKp())
+// Main program, run once both motors are wired up with unique addresses.
+let leftMotor = unitBldc.connect(0x65)
+let rightMotor = unitBldc.connect(0x6A)
+
+leftMotor.setMode(unitBldc.BldcMode.ClosedLoop)
+rightMotor.setMode(unitBldc.BldcMode.ClosedLoop)
+
+leftMotor.setDirection(unitBldc.BldcDirection.Forward)
+rightMotor.setDirection(unitBldc.BldcDirection.Backward)
+
+leftMotor.setRPM(1000)
+rightMotor.setRPM(1000)
 
 basic.forever(function () {
-    basic.showNumber(unitBldc.getRpmReadback())
-    basic.pause(500)
+    basic.showNumber(leftMotor.getRpmReadback())
+    basic.pause(300)
+    basic.showNumber(rightMotor.getRpmReadback())
+    basic.pause(300)
 })
