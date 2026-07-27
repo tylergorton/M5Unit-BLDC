@@ -10,7 +10,6 @@
         "test.ts"
     ],
     "public": true,
-    "target": "microbit",
     "supportedTargets": [
         "microbit"
     ]
