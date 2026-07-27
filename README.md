@@ -27,12 +27,12 @@ need to give each one a unique address, **one motor at a time**:
 5. Once every motor has a unique address, wire them all together on the bus and flash your real
    program using those addresses.
 
-> **Note on flash persistence:** the underlying device's "save to flash" register is documented (in
-> the original driver) as saving the motor model and pole-pair configuration. It doesn't explicitly
-> document whether an I2C address change is included in that save, or persists on its own. Calling
-> `saveMotorDataToFlash()` after `setI2CAddress()` is the safest bet with the tools available, but it's
-> worth confirming empirically (power cycle and check `isConnected()` at the new address) or checking
-> M5Stack's docs/forum if you run into trouble.
+> **Flash persistence (confirmed from M5Stack's official I2C protocol doc):** writing `1` to the
+> flash-writeback register (triggered by `saveMotorDataToFlash()`) persists three things across a power
+> cycle: the **I2C address**, the **PID values**, and the **motor model / pole pairs**. So both
+> `setI2CAddress()` and `setPID()` need a follow-up call to `saveMotorDataToFlash()` if you want those
+> settings to survive a reboot - everything else (mode, direction, PWM, target RPM) is not persisted and
+> needs to be re-set each time your program starts.
 
 ## Usage
 
@@ -62,13 +62,15 @@ blocks are called on that object, e.g. `leftMotor.setRPM(1000)`.
 - **set target RPM / target RPM** – used in closed loop mode
 - **RPM readback / frequency readback (Hz)** – live sensor readback as numbers
 - **RPM readback text / frequency readback text** – live sensor readback as strings, straight from the device
-- **set PID / PID values** – closed loop PID tuning; `PID values` returns an array `[Kp, Ki, Kd]`
+- **set PID / PID values** – closed loop PID tuning; `PID values` returns an array `[Kp, Ki, Kd]`.
+  Call `save motor config to flash` afterward if you want these values to survive a power cycle.
 - **PID Kp / PID Ki / PID Kd** – convenience blocks to read back a single term (each just indexes
   into `PID values`); handy since PID is normally set by the user and read back only to confirm
 - **status** – standby / running / error
 - **set motor model / motor model** – low speed / high speed
 - **set motor pole pairs / motor pole pairs** – motor configuration
-- **save motor config to flash** – persist motor model + pole pairs (and possibly I2C address, see above)
+- **save motor config to flash** – persist I2C address, PID values, and motor model/pole pairs (see
+  flash persistence note above)
 - **firmware version** – read the device firmware version
 - **set I2C address** – change this motor's I2C address (see "Assigning addresses" above)
 
