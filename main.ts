@@ -270,7 +270,9 @@ namespace unitBldc {
         }
 
         /**
-         * Set the PID parameters used in closed loop mode.
+         * Set the PID parameters used in closed loop mode. Not persisted across a
+         * power cycle by itself - call saveMotorDataToFlash() afterward if you
+         * want these values to stick.
          */
         //% blockId=unitbldc_set_pid
         //% block="%motor|set PID Kp %p|Ki %i|Kd %d"
@@ -420,10 +422,10 @@ namespace unitBldc {
         }
 
         /**
-         * Change this motor's I2C address. Only wire up ONE motor at a time on the
-         * bus when doing this - if two motors share an address you can't tell them
-         * apart to address only one. Follow with saveMotorDataToFlash() and power
-         * cycle the unit to confirm the new address stuck.
+         * Change this motor's I2C address (valid range 1~127). Only wire up ONE
+         * motor at a time on the bus when doing this - if two motors share an
+         * address you can't tell them apart to address only one. Follow with
+         * saveMotorDataToFlash() so the new address survives a power cycle.
          * @param addr the new I2C address, eg: 0x6A
          */
         //% blockId=unitbldc_set_i2c_address
