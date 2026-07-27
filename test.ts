@@ -8,6 +8,9 @@
 
 
 // Main program, run once both motors are wired up with unique addresses.
+// If run in the simulator (no real hardware), each motor automatically falls
+// back to mock mode and writes its settings to the Console view instead
+// (click "Show console device" below the simulator to see them).
 let leftMotor = unitBldc.connect(0x65)
 let rightMotor = unitBldc.connect(0x6A)
 

@@ -8,6 +8,14 @@
  *
  * Each physical Unit BLDC is represented as a BldcMotor object, so multiple motors
  * (each with its own I2C address) can be controlled independently on the same bus.
+ *
+ * MOCK MODE: since there's no real motor to talk to in the browser simulator, each
+ * BldcMotor checks once (on first use) whether it's actually getting an I2C ACK. If
+ * not, it stops attempting real I2C transactions and instead keeps an in-memory
+ * shadow of every setting, writing a line to the serial/Console view on each write
+ * and returning the shadow value on every read - so block programs behave sensibly
+ * (and visibly) when run in the simulator, with no separate simulator extension
+ * required.
  */
 
 //% color="#AA278D" icon="\uf085" block="Unit BLDC" weight=100
@@ -67,12 +75,37 @@ namespace unitBldc {
         return v
     }
 
+    function modeLabel(mode: BldcMode): string {
+        return mode == BldcMode.ClosedLoop ? "closed loop" : "open loop"
+    }
+
+    function directionLabel(dir: BldcDirection): string {
+        return dir == BldcDirection.Backward ? "backward" : "forward"
+    }
+
+    function motorModelLabel(model: BldcMotorModel): string {
+        return model == BldcMotorModel.HighSpeed ? "high speed" : "low speed"
+    }
+
     /**
      * A single Unit BLDC motor, identified by its I2C address. Create one instance
      * per physical motor unit on the bus (see unitBldc.connect).
      */
     export class BldcMotor {
         private address: number
+
+        // Cached result of the one-time "is real hardware actually there" probe.
+        private hwChecked = false
+        private hwPresent = false
+
+        // Shadow state used only in mock mode (no hardware detected).
+        private simMode: BldcMode = BldcMode.OpenLoop
+        private simDirection: BldcDirection = BldcDirection.Forward
+        private simPwm: number = 0
+        private simRpm: number = 0
+        private simPid: number[] = [0, 0, 0]
+        private simMotorModel: BldcMotorModel = BldcMotorModel.LowSpeed
+        private simPolePairs: number = 7
 
         constructor(addr: number) {
             this.address = addr
@@ -114,6 +147,23 @@ namespace unitBldc {
             return s
         }
 
+        private log(message: string): void {
+            serial.writeLine("Motor " + this.address + ": " + message)
+        }
+
+        // Lazily probes the bus once, caches the result, and announces mock mode
+        // the first time it's entered. Reset (see setI2CAddress) if the address changes.
+        private hardwarePresent(): boolean {
+            if (!this.hwChecked) {
+                this.hwPresent = this.isConnected()
+                this.hwChecked = true
+                if (!this.hwPresent) {
+                    this.log("no physical device detected, running in mock mode")
+                }
+            }
+            return this.hwPresent
+        }
+
         /**
          * Test whether this motor responds on the I2C bus at its current address.
          */
@@ -133,7 +183,12 @@ namespace unitBldc {
         //% weight=95
         //% group="Motor Control"
         setMode(mode: BldcMode): void {
-            this.writeBytes(REG_MODE, [mode])
+            this.simMode = mode
+            if (this.hardwarePresent()) {
+                this.writeBytes(REG_MODE, [mode])
+            } else {
+                this.log("control mode was set to " + modeLabel(mode))
+            }
         }
 
         /**
@@ -144,8 +199,11 @@ namespace unitBldc {
         //% weight=94
         //% group="Motor Control"
         getMode(): BldcMode {
-            let buf = this.readBytes(REG_MODE, 1)
-            return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcMode
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_MODE, 1)
+                return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcMode
+            }
+            return this.simMode
         }
 
         /**
@@ -156,7 +214,12 @@ namespace unitBldc {
         //% weight=93
         //% group="Motor Control"
         setDirection(dir: BldcDirection): void {
-            this.writeBytes(REG_DIR, [dir])
+            this.simDirection = dir
+            if (this.hardwarePresent()) {
+                this.writeBytes(REG_DIR, [dir])
+            } else {
+                this.log("direction was set to " + directionLabel(dir))
+            }
         }
 
         /**
@@ -167,8 +230,11 @@ namespace unitBldc {
         //% weight=92
         //% group="Motor Control"
         getDirection(): BldcDirection {
-            let buf = this.readBytes(REG_DIR, 1)
-            return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcDirection
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_DIR, 1)
+                return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcDirection
+            }
+            return this.simDirection
         }
 
         /**
@@ -182,10 +248,15 @@ namespace unitBldc {
         //% group="Motor Control"
         setPWM(duty: number): void {
             duty = clamp(0, 2047, duty)
-            let out = pins.createBuffer(3)
-            out.setNumber(NumberFormat.UInt8LE, 0, REG_PWM)
-            out.setNumber(NumberFormat.UInt16LE, 1, duty)
-            pins.i2cWriteBuffer(this.address, out, false)
+            this.simPwm = duty
+            if (this.hardwarePresent()) {
+                let out = pins.createBuffer(3)
+                out.setNumber(NumberFormat.UInt8LE, 0, REG_PWM)
+                out.setNumber(NumberFormat.UInt16LE, 1, duty)
+                pins.i2cWriteBuffer(this.address, out, false)
+            } else {
+                this.log("PWM duty was set to " + duty)
+            }
         }
 
         /**
@@ -196,8 +267,11 @@ namespace unitBldc {
         //% weight=89
         //% group="Motor Control"
         getPWM(): number {
-            let buf = this.readBytes(REG_PWM, 2)
-            return buf.getNumber(NumberFormat.UInt16LE, 0)
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_PWM, 2)
+                return buf.getNumber(NumberFormat.UInt16LE, 0)
+            }
+            return this.simPwm
         }
 
         /**
@@ -209,7 +283,12 @@ namespace unitBldc {
         //% weight=88
         //% group="Motor Control"
         setRPM(rpm: number): void {
-            this.writeFloat(REG_SET_RPM, rpm)
+            this.simRpm = rpm
+            if (this.hardwarePresent()) {
+                this.writeFloat(REG_SET_RPM, rpm)
+            } else {
+                this.log("RPM was set to " + rpm)
+            }
         }
 
         /**
@@ -220,29 +299,41 @@ namespace unitBldc {
         //% weight=87
         //% group="Motor Control"
         getRPM(): number {
-            return this.readFloat(REG_SET_RPM)
+            if (this.hardwarePresent()) {
+                return this.readFloat(REG_SET_RPM)
+            }
+            return this.simRpm
         }
 
         /**
-         * Get the real time RPM readback from the motor.
+         * Get the real time RPM readback from the motor. In mock mode this mirrors
+         * the target RPM, since there's no physical motor to measure.
          */
         //% blockId=unitbldc_get_rpm_readback
         //% block="%motor|RPM readback"
         //% weight=86
         //% group="Readings"
         getRpmReadback(): number {
-            return this.readFloat(REG_READBACK_RPM)
+            if (this.hardwarePresent()) {
+                return this.readFloat(REG_READBACK_RPM)
+            }
+            return this.simRpm
         }
 
         /**
-         * Get the real time frequency readback from the motor (Hz).
+         * Get the real time frequency readback from the motor (Hz). In mock mode
+         * this is derived from the target RPM and pole pairs, using the same
+         * relationship as the real device: RPM = frequency * 60 / pole pairs.
          */
         //% blockId=unitbldc_get_freq_readback
         //% block="%motor|frequency readback (Hz)"
         //% weight=85
         //% group="Readings"
         getFreqReadback(): number {
-            return this.readFloat(REG_READBACK_FREQ)
+            if (this.hardwarePresent()) {
+                return this.readFloat(REG_READBACK_FREQ)
+            }
+            return (this.simRpm * this.simPolePairs) / 60
         }
 
         /**
@@ -253,8 +344,11 @@ namespace unitBldc {
         //% weight=84
         //% group="Readings"
         getRpmReadbackString(): string {
-            let buf = this.readBytes(REG_READBACK_RPM_STRING, 16)
-            return this.bufferToString(buf)
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_READBACK_RPM_STRING, 16)
+                return this.bufferToString(buf)
+            }
+            return "" + this.simRpm
         }
 
         /**
@@ -265,8 +359,11 @@ namespace unitBldc {
         //% weight=83
         //% group="Readings"
         getFreqReadbackString(): string {
-            let buf = this.readBytes(REG_READBACK_FREQ_STRING, 16)
-            return this.bufferToString(buf)
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_READBACK_FREQ_STRING, 16)
+                return this.bufferToString(buf)
+            }
+            return "" + this.getFreqReadback()
         }
 
         /**
@@ -279,12 +376,17 @@ namespace unitBldc {
         //% weight=80
         //% group="PID Tuning"
         setPID(p: number, i: number, d: number): void {
-            let out = pins.createBuffer(13)
-            out.setNumber(NumberFormat.UInt8LE, 0, REG_PID)
-            out.setNumber(NumberFormat.Int32LE, 1, Math.round(p * 100))
-            out.setNumber(NumberFormat.Int32LE, 5, Math.round(i * 100))
-            out.setNumber(NumberFormat.Int32LE, 9, Math.round(d * 100))
-            pins.i2cWriteBuffer(this.address, out, false)
+            this.simPid = [p, i, d]
+            if (this.hardwarePresent()) {
+                let out = pins.createBuffer(13)
+                out.setNumber(NumberFormat.UInt8LE, 0, REG_PID)
+                out.setNumber(NumberFormat.Int32LE, 1, Math.round(p * 100))
+                out.setNumber(NumberFormat.Int32LE, 5, Math.round(i * 100))
+                out.setNumber(NumberFormat.Int32LE, 9, Math.round(d * 100))
+                pins.i2cWriteBuffer(this.address, out, false)
+            } else {
+                this.log("PID was set to Kp=" + p + ", Ki=" + i + ", Kd=" + d)
+            }
         }
 
         /**
@@ -295,11 +397,14 @@ namespace unitBldc {
         //% weight=79
         //% group="PID Tuning"
         getPID(): number[] {
-            let buf = this.readBytes(REG_PID, 12)
-            let p = buf.getNumber(NumberFormat.Int32LE, 0) / 100.0
-            let i = buf.getNumber(NumberFormat.Int32LE, 4) / 100.0
-            let d = buf.getNumber(NumberFormat.Int32LE, 8) / 100.0
-            return [p, i, d]
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_PID, 12)
+                let p = buf.getNumber(NumberFormat.Int32LE, 0) / 100.0
+                let i = buf.getNumber(NumberFormat.Int32LE, 4) / 100.0
+                let d = buf.getNumber(NumberFormat.Int32LE, 8) / 100.0
+                return [p, i, d]
+            }
+            return this.simPid
         }
 
         /**
@@ -339,15 +444,22 @@ namespace unitBldc {
         }
 
         /**
-         * Get the current motor status.
+         * Get the current motor status. In mock mode this is derived from whether
+         * a nonzero PWM duty or target RPM is currently set.
          */
         //% blockId=unitbldc_get_motor_status
         //% block="%motor|status"
         //% weight=75
         //% group="Readings"
         getMotorStatus(): BldcMotorStatus {
-            let buf = this.readBytes(REG_MOTOR_STATUS, 1)
-            return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_MOTOR_STATUS, 1)
+                return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
+            }
+            if (this.simPwm > 0 || this.simRpm != 0) {
+                return BldcMotorStatus.Running
+            }
+            return BldcMotorStatus.Standby
         }
 
         /**
@@ -358,7 +470,12 @@ namespace unitBldc {
         //% weight=70
         //% group="Configuration"
         setMotorModel(model: BldcMotorModel): void {
-            this.writeBytes(REG_MOTOR_CONFIG, [model])
+            this.simMotorModel = model
+            if (this.hardwarePresent()) {
+                this.writeBytes(REG_MOTOR_CONFIG, [model])
+            } else {
+                this.log("motor model was set to " + motorModelLabel(model))
+            }
         }
 
         /**
@@ -369,8 +486,11 @@ namespace unitBldc {
         //% weight=69
         //% group="Configuration"
         getMotorModel(): BldcMotorModel {
-            let buf = this.readBytes(REG_MOTOR_CONFIG, 1)
-            return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcMotorModel
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_MOTOR_CONFIG, 1)
+                return buf.getNumber(NumberFormat.UInt8LE, 0) as BldcMotorModel
+            }
+            return this.simMotorModel
         }
 
         /**
@@ -383,7 +503,12 @@ namespace unitBldc {
         //% weight=68
         //% group="Configuration"
         setMotorPolePairs(pairs: number): void {
-            this.writeBytes(REG_MOTOR_CONFIG + 1, [pairs])
+            this.simPolePairs = pairs
+            if (this.hardwarePresent()) {
+                this.writeBytes(REG_MOTOR_CONFIG + 1, [pairs])
+            } else {
+                this.log("pole pairs was set to " + pairs)
+            }
         }
 
         /**
@@ -394,19 +519,27 @@ namespace unitBldc {
         //% weight=67
         //% group="Configuration"
         getMotorPolePairs(): number {
-            let buf = this.readBytes(REG_MOTOR_CONFIG + 1, 1)
-            return buf.getNumber(NumberFormat.UInt8LE, 0)
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_MOTOR_CONFIG + 1, 1)
+                return buf.getNumber(NumberFormat.UInt8LE, 0)
+            }
+            return this.simPolePairs
         }
 
         /**
-         * Save the motor model and pole pairs configuration to onboard flash.
+         * Save the motor model, pole pairs, PID values, and I2C address to onboard
+         * flash. Has no persistent effect in mock mode.
          */
         //% blockId=unitbldc_save_flash
         //% block="%motor|save motor config to flash"
         //% weight=60
         //% group="Configuration"
         saveMotorDataToFlash(): void {
-            this.writeBytes(REG_SAVE_TO_FLASH, [1])
+            if (this.hardwarePresent()) {
+                this.writeBytes(REG_SAVE_TO_FLASH, [1])
+            } else {
+                this.log("config save to flash was requested (no effect in the simulator)")
+            }
         }
 
         /**
@@ -417,8 +550,11 @@ namespace unitBldc {
         //% weight=50
         //% group="Setup"
         getFirmwareVersion(): number {
-            let buf = this.readBytes(REG_FIRMWARE_VERSION, 1)
-            return buf.getNumber(NumberFormat.UInt8LE, 0)
+            if (this.hardwarePresent()) {
+                let buf = this.readBytes(REG_FIRMWARE_VERSION, 1)
+                return buf.getNumber(NumberFormat.UInt8LE, 0)
+            }
+            return 0
         }
 
         /**
@@ -433,11 +569,18 @@ namespace unitBldc {
         //% weight=40
         //% group="Setup"
         setI2CAddress(addr: number): boolean {
-            if (this.writeBytes(REG_I2C_ADDRESS, [addr])) {
-                this.address = addr
-                return true
+            let ok = true
+            if (this.hardwarePresent()) {
+                ok = this.writeBytes(REG_I2C_ADDRESS, [addr])
+            } else {
+                this.log("I2C address was set to " + addr)
             }
-            return false
+            if (ok) {
+                this.address = addr
+                // address changed - force a fresh hardware-presence check next time
+                this.hwChecked = false
+            }
+            return ok
         }
 
         /**
@@ -445,13 +588,18 @@ namespace unitBldc {
          * call via JavaScript if needed: motor.jumpBootloader()
          */
         jumpBootloader(): void {
-            this.writeBytes(REG_JUMP_BOOTLOADER, [1])
+            if (this.hardwarePresent()) {
+                this.writeBytes(REG_JUMP_BOOTLOADER, [1])
+            } else {
+                this.log("bootloader jump was requested (no effect in the simulator)")
+            }
         }
     }
 
     /**
      * Connect to a Unit BLDC over I2C. Create one of these per physical motor, each
-     * with its own (unique) I2C address.
+     * with its own (unique) I2C address. If no physical device responds, the motor
+     * automatically switches to mock mode (see the file header comment).
      * @param addr the I2C address of the device, eg: 0x65
      */
     //% blockId=unitbldc_create
