@@ -569,18 +569,19 @@ namespace unitBldc {
         //% weight=40
         //% group="Setup"
         setI2CAddress(addr: number): boolean {
-            let ok = true
             if (this.hardwarePresent()) {
-                ok = this.writeBytes(REG_I2C_ADDRESS, [addr])
+                let ok = this.writeBytes(REG_I2C_ADDRESS, [addr])
+                if (ok) {
+                    this.address = addr
+                    // address changed - force a fresh check at the new address next time
+                    this.hwChecked = false
+                }
+                return ok
             } else {
                 this.log("I2C address was set to " + addr)
-            }
-            if (ok) {
                 this.address = addr
-                // address changed - force a fresh hardware-presence check next time
-                this.hwChecked = false
+                return true
             }
-            return ok
         }
 
         /**
