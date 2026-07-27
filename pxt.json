@@ -2,6 +2,10 @@
     "name": "unit-bldc",
     "version": "0.0.0",
     "description": "MakeCode blocks for the M5Stack Unit BLDC brushless DC motor driver, ported from the M5UnitBLDC Arduino library.",
+    "license": "MIT",
+    "dependencies": {
+        "core": "*"
+    },
     "files": [
         "main.ts",
         "README.md"
@@ -9,8 +13,5 @@
     "testFiles": [
         "test.ts"
     ],
-    "public": true,
-    "supportedTargets": [
-        "microbit"
-    ]
+    "public": true
 }
