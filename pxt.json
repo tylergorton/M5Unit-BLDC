@@ -10,8 +10,14 @@
         "main.ts",
         "README.md"
     ],
+    "simFiles": [
+        "simulator.ts"
+    ],
     "testFiles": [
         "test.ts"
     ],
-    "public": true
+    "public": true,
+    "supportedTargets": [
+        "microbit"
+    ]
 }

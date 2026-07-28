@@ -34,35 +34,34 @@ need to give each one a unique address, **one motor at a time**:
 > settings to survive a reboot - everything else (mode, direction, PWM, target RPM) is not persisted and
 > needs to be re-set each time your program starts.
 
-## Mock mode (simulator support)
+## Simulator support
 
-There's no real motor to talk to in the browser simulator, so each `BldcMotor` checks once (the first
-time you call a block on it) whether it's actually getting an I2C response. If not - which will always
-be true in the simulator, since nothing exists at that address - it switches to mock mode: it stops
-attempting real I2C transactions, keeps an in-memory shadow of every setting, and writes a line to the
-Console view (via `serial.writeLine`) each time you set something, e.g.:
+There's no real motor to talk to in the browser simulator. Every hardware-facing operation in `main.ts`
+is a small module-level function tagged `//% shim=unitBldcSim::xxx` - on a real board that's just an
+annotation with no effect, and the plain TypeScript body underneath (an ordinary I2C read/write) is what
+actually runs. In the simulator, MakeCode instead uses the alternate implementation registered in
+`simulator.ts`, which is only ever compiled into the simulator bundle (see `simFiles` in `pxt.json`,
+never shipped to the real board).
 
-```
-Motor 101: no physical device detected, running in mock mode
-Motor 101: RPM was set to 1000
-Motor 101: PID was set to Kp=2, Ki=0.5, Kd=0
-```
+`simulator.ts` keeps a shadow of every motor's settings (keyed by I2C address), logs each change to
+the browser console, and drives a small animated widget showing each motor's live RPM/PWM and a spinning
+indicator. Reading a setting back (`target RPM`, `PID values`, `motor model`, etc.) returns whatever was
+last set, so you can confirm your program's logic before ever touching real hardware. Sensor-style
+readbacks that aren't user-set (`RPM readback`, `frequency readback`, `status`) are approximated from the
+current setpoint rather than fabricated - `frequency readback` in particular uses the same relationship
+as the real device (`RPM = frequency * 60 / pole pairs`), just solved the other way around.
 
-To see these messages, click **Show console device** (or **Show data**) just below the simulator panel
-- that's where MakeCode surfaces everything written via `serial`, whether running in the simulator or
-on a real connected board. (Plain `console.log` only shows in the browser's own DevTools console, not in
-MakeCode's UI, which is why this library uses `serial.writeLine` instead.)
+This is plain TypeScript - no native C++ anywhere. The `shim`/`simFiles` mechanism only requires C++ when
+the hardware side itself needs a *different* implementation than what's written in `main.ts` (e.g. a
+sensor needing low-level native access); since our hardware implementation is the same ordinary TypeScript
+either way, the plain body serves as the real hardware code, and `simFiles` only supplies an alternate
+implementation for the browser.
 
-Reading a setting back (`target RPM`, `PID values`, `motor model`, etc.) returns whatever was last set,
-so you can confirm your program's logic is doing what you expect before ever touching real hardware.
-Sensor-style readbacks that aren't user-set (`RPM readback`, `frequency readback`, `status`) are
-approximated from the current setpoint rather than fabricated - `frequency readback` in particular uses
-the same relationship as the real device (`RPM = frequency * 60 / pole pairs`), just solved the other
-way around.
-
-This is separate from - and much lighter weight than - MakeCode's official "simulator extension"
-mechanism, which requires a separate approval process and isn't available for extensions loaded
-directly from a GitHub URL.
+> **Note:** the visual widget (the SVG spinner/readout, via `pxsim.VisualControlView` in
+> `simulator.ts`) is adapted from a known-working pattern, but the exact registration step that mounts
+> a custom control view onto the simulator board isn't confirmed here and may need adjustment once you
+> build it. The state-tracking and console logging don't depend on the widget working and will function
+> regardless.
 
 ## Usage
 
