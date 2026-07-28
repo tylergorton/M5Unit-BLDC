@@ -45,7 +45,7 @@ namespace pxsim.unitBldcSim {
     // pxsim.serial.writeString just calls board().writeSerial(s). Needs a
     // trailing newline, since writeSerial buffers until it sees one.
     function log(address: number, message: string): void {
-        board().writeSerial("Motor " + address + ": " + message + "\n")
+        console.log("Motor " + address + ": " + message + "\n")
     }
 
     export function isConnected(address: number): boolean {
