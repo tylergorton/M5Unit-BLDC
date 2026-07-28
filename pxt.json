@@ -8,10 +8,8 @@
     },
     "files": [
         "main.ts",
+        "simulator.ts",
         "README.md"
-    ],
-    "simFiles": [
-        "simulator.ts"
     ],
     "testFiles": [
         "test.ts"
