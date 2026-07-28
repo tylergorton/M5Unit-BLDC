@@ -19,16 +19,9 @@ namespace pxsim.unitBldcSim {
         pid: number[]
         motorModel: number
         polePairs: number
-        // Index into the visual widget's fixed slots, or -1 if none available.
-        slot: number
     }
 
-    const MAX_VISUAL_SLOTS = 2
-
     let motors: { [address: number]: MotorState } = {}
-    let slotCount = 0
-    let animationActive = false
-    let angles: { [address: number]: number } = {}
 
     function state(address: number): MotorState {
         let m = motors[address]
@@ -40,55 +33,22 @@ namespace pxsim.unitBldcSim {
                 rpm: 0,
                 pid: [0, 0, 0],
                 motorModel: 0,
-                polePairs: 7,
-                slot: slotCount < MAX_VISUAL_SLOTS ? slotCount++ : -1
+                polePairs: 7
             }
             motors[address] = m
         }
         return m
     }
 
-    // Console logging, in addition to the live widget text below. Falls back to
-    // the browser DevTools console if the Console/data view isn't open.
+    // Writes to the same Console/data view that serial.writeLine() uses on a
+    // real board - confirmed via pxt-microbit's own sim/state/serial.ts, where
+    // pxsim.serial.writeString just calls board().writeSerial(s). Needs a
+    // trailing newline, since writeSerial buffers until it sees one.
     function log(address: number, message: string): void {
-        console.log("Motor " + address + ": " + message)
-    }
-
-    function updateWidget(address: number, m: MotorState): void {
-        if (m.slot < 0) return
-        const textEl = document.getElementById("unitbldc-text-" + m.slot)
-        if (textEl) {
-            textEl.textContent =
-                "#" + address + "  RPM:" + m.rpm + "  PWM:" + m.pwm
-        }
-        ensureAnimating()
-    }
-
-    function ensureAnimating(): void {
-        if (animationActive) return
-        animationActive = true
-        requestAnimationFrame(animate)
-    }
-
-    function animate(): void {
-        for (let key in motors) {
-            const address = parseInt(key)
-            const m = motors[address]
-            if (m.slot < 0) continue
-            const magnitude = m.pwm > 0
-                ? m.pwm / 2047
-                : (m.rpm != 0 ? Math.min(Math.abs(m.rpm) / 3000, 1) : 0)
-            angles[address] = ((angles[address] || 0) + magnitude * 6) % 360
-            const wheel = document.getElementById("unitbldc-wheel-" + m.slot)
-            if (wheel) {
-                wheel.setAttribute("transform", "rotate(" + angles[address] + " 40 45)")
-            }
-        }
-        requestAnimationFrame(animate)
+        board().writeSerial("Motor " + address + ": " + message + "\n")
     }
 
     export function isConnected(address: number): boolean {
-        state(address) // register this address so it gets a widget slot
         return false // no physical device exists in the simulator
     }
 
@@ -111,10 +71,8 @@ namespace pxsim.unitBldcSim {
     }
 
     export function setPWM(address: number, duty: number): void {
-        const m = state(address)
-        m.pwm = duty
+        state(address).pwm = duty
         log(address, "PWM duty was set to " + duty)
-        updateWidget(address, m)
     }
 
     export function getPWM(address: number): number {
@@ -122,10 +80,8 @@ namespace pxsim.unitBldcSim {
     }
 
     export function setRPM(address: number, rpm: number): void {
-        const m = state(address)
-        m.rpm = rpm
+        state(address).rpm = rpm
         log(address, "RPM was set to " + rpm)
-        updateWidget(address, m)
     }
 
     export function getRPM(address: number): number {
@@ -201,42 +157,5 @@ namespace pxsim.unitBldcSim {
 
     export function jumpBootloader(address: number): void {
         log(address, "bootloader jump was requested (no effect in the simulator)")
-    }
-}
-
-/**
- * NOTE ON THE VISUAL WIDGET BELOW: this part is adapted directly from a working
- * VisualControlView example, but the exact mechanism that registers/mounts a
- * custom control view onto the simulator board isn't something confirmed here -
- * it may need adjustment once you actually try building this. The state-tracking
- * and Console logging above (pxsim.unitBldcSim) don't depend on this part working
- * and will function regardless.
- */
-namespace pxsim {
-    export class UnitBldcVisualControlView extends pxsim.VisualControlView {
-        internalCreateSVG(): string {
-            return `<svg viewBox="0 0 220 100" width="100%" height="100%">
-                <g transform="translate(10, 10)">
-                    <rect x="0" y="20" width="80" height="50" fill="#2c3e50" rx="4"/>
-                    <circle cx="40" cy="45" r="8" fill="#7f8c8d"/>
-                    <g id="unitbldc-wheel-0" style="transform-origin: 40px 45px;">
-                        <circle cx="40" cy="45" r="20" fill="#e74c3c" opacity="0.8"/>
-                        <line x1="20" y1="45" x2="60" y2="45" stroke="#fff" stroke-width="4"/>
-                        <line x1="40" y1="25" x2="40" y2="65" stroke="#fff" stroke-width="4"/>
-                    </g>
-                    <text id="unitbldc-text-0" x="5" y="85" fill="#2ecc71" font-size="10" font-family="monospace">no motor yet</text>
-                </g>
-                <g transform="translate(120, 10)">
-                    <rect x="0" y="20" width="80" height="50" fill="#2c3e50" rx="4"/>
-                    <circle cx="40" cy="45" r="8" fill="#7f8c8d"/>
-                    <g id="unitbldc-wheel-1" style="transform-origin: 40px 45px;">
-                        <circle cx="40" cy="45" r="20" fill="#3498db" opacity="0.8"/>
-                        <line x1="20" y1="45" x2="60" y2="45" stroke="#fff" stroke-width="4"/>
-                        <line x1="40" y1="25" x2="40" y2="65" stroke="#fff" stroke-width="4"/>
-                    </g>
-                    <text id="unitbldc-text-1" x="5" y="85" fill="#2ecc71" font-size="10" font-family="monospace">no motor yet</text>
-                </g>
-            </svg>`
-        }
     }
 }
