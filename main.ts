@@ -9,20 +9,27 @@
  * Each physical Unit BLDC is represented as a BldcMotor object, so multiple motors
  * (each with its own I2C address) can be controlled independently on the same bus.
  *
- * SIMULATOR SUPPORT: uses logging.ts (see that file), not shim/simFiles.
- * logging.set(key, value) and logging.log(message) both return true when
- * logging IS active (i.e. we're in the simulator), so every setter (and
- * saveMotorDataToFlash, setI2CAddress, jumpBootloader) reads as an early-return
- * guard: if (logging.set(key, val)) return - the real I2C lines below only run
- * when NOT in the simulator. logging.isSimulator() stays private to logging.ts -
- * this file only ever touches logging.log(), logging.set(), and logging.get(),
- * never checking the environment directly itself. Getters use logging.get(key,
- * fallback) instead, which returns undefined outright when not in the simulator
- * (meaning "go do the real I2C read"), or the logged value/fallback when it is -
- * a single ternary then flows from key value, to fallback value, to real read.
- * A few methods without a natural dedicated key (the composite getters like
- * frequency readback) reuse an existing key purely as an environment probe,
- * rather than duplicating a key just to ask "am I in the simulator".
+ * SIMULATOR SUPPORT: uses unitBldcLog.ts (see that file), not shim/simFiles.
+ * Each BldcMotor owns its own private unitBldcLog.InstanceLog (this.log), so
+ * simulator-only state is genuinely encapsulated per motor - no shared
+ * dictionary between motors (no address-prefixed keys needed), and no shared
+ * global namespace state that another extension's own code could ever collide
+ * with (this replaced an earlier design using one shared namespace-level
+ * dictionary with address-prefixed keys, after a suspected collision with
+ * another extension's identically-named namespace). All logging goes through
+ * this.log's three methods: this.log.set(key, value) and this.log.log(message)
+ * both return true when logging IS active (i.e. we're in the simulator), so
+ * every setter and action method reads as an early-return guard:
+ * if (this.log.set(key, val)) return - the real I2C lines below only run when
+ * NOT in the simulator. log(message) covers the handful of action messages not
+ * tied to any single stored key (address changes, flash saves, bootloader
+ * jumps). Getters use this.log.get(key, fallback) instead, which returns
+ * undefined outright when not in the simulator (meaning "go do the real I2C
+ * read"), or the logged value/fallback when it is - a single ternary then
+ * flows from key value, to fallback value, to real read. A few methods
+ * without a natural dedicated key (the composite getters like frequency
+ * readback) reuse an existing key purely as an environment probe, rather than
+ * duplicating a key just to ask "am I in the simulator".
  */
 
 //% color="#AA278D" icon="\uf085" block="Unit BLDC" weight=100
@@ -88,15 +95,11 @@ namespace unitBldc {
      */
     export class BldcMotor {
         private address: number
+        private log: unitBldcLog.InstanceLog
 
         constructor(addr: number) {
             this.address = addr
-        }
-
-        // Per-motor key prefix, so two motors on the same bus don't collide in
-        // logging.ts's shared state dictionary.
-        private key(field: string): string {
-            return this.address + ":" + field
+            this.log = new unitBldcLog.InstanceLog("Motor " + addr)
         }
 
         private writeBytes(reg: number, data: number[]): boolean {
@@ -144,7 +147,7 @@ namespace unitBldc {
         //% weight=100
         //% group="Setup"
         isConnected(): boolean {
-            let v = logging.get(this.key("connected"), true)
+            let v = this.log.get("connected", true)
             return v !== undefined ? v : pins.i2cWriteBuffer(this.address, pins.createBuffer(0), false) == 0
         }
 
@@ -158,10 +161,7 @@ namespace unitBldc {
         //% weight=95
         //% group="Motor Control"
         setMode(mode: BldcMode): void {
-            let loggingActive = logging.set(this.key("mode"), mode)
-            logging.set(this.key("pwm"), 0)
-            logging.set(this.key("rpm"), 0)
-            if (loggingActive) return
+            if (this.log.set("mode", mode) && this.log.set("pwm", 0) && this.log.set("rpm", 0)) return
             this.writeBytes(REG_MODE, [mode])
         }
 
@@ -173,7 +173,7 @@ namespace unitBldc {
         //% weight=94
         //% group="Motor Control"
         getMode(): BldcMode {
-            let v = logging.get(this.key("mode"), BldcMode.OpenLoop)
+            let v = this.log.get("mode", BldcMode.OpenLoop)
             return v !== undefined ? v : this.readBytes(REG_MODE, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMode
         }
 
@@ -185,7 +185,7 @@ namespace unitBldc {
         //% weight=93
         //% group="Motor Control"
         setDirection(dir: BldcDirection): void {
-            if (logging.set(this.key("direction"), dir)) return
+            if (this.log.set("direction", dir)) return
             this.writeBytes(REG_DIR, [dir])
         }
 
@@ -197,7 +197,7 @@ namespace unitBldc {
         //% weight=92
         //% group="Motor Control"
         getDirection(): BldcDirection {
-            let v = logging.get(this.key("direction"), BldcDirection.Forward)
+            let v = this.log.get("direction", BldcDirection.Forward)
             return v !== undefined ? v : this.readBytes(REG_DIR, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcDirection
         }
 
@@ -212,7 +212,7 @@ namespace unitBldc {
         //% group="Motor Control"
         setPWM(duty: number): void {
             duty = clamp(0, 2047, duty)
-            if (logging.set(this.key("pwm"), duty)) return
+            if (this.log.set("pwm", duty)) return
             let out = pins.createBuffer(3)
             out.setNumber(NumberFormat.UInt8LE, 0, REG_PWM)
             out.setNumber(NumberFormat.UInt16LE, 1, duty)
@@ -227,7 +227,7 @@ namespace unitBldc {
         //% weight=89
         //% group="Motor Control"
         getPWM(): number {
-            let v = logging.get(this.key("pwm"), 0)
+            let v = this.log.get("pwm", 0)
             return v !== undefined ? v : this.readBytes(REG_PWM, 2).getNumber(NumberFormat.UInt16LE, 0)
         }
 
@@ -240,7 +240,7 @@ namespace unitBldc {
         //% weight=88
         //% group="Motor Control"
         setRPM(rpm: number): void {
-            if (logging.set(this.key("rpm"), rpm)) return
+            if (this.log.set("rpm", rpm)) return
             this.writeFloat(REG_SET_RPM, rpm)
         }
 
@@ -252,7 +252,7 @@ namespace unitBldc {
         //% weight=87
         //% group="Motor Control"
         getRPM(): number {
-            let v = logging.get(this.key("rpm"), 0)
+            let v = this.log.get("rpm", 0)
             return v !== undefined ? v : this.readFloat(REG_SET_RPM)
         }
 
@@ -266,7 +266,7 @@ namespace unitBldc {
         //% weight=86
         //% group="Readings"
         getRpmReadback(): number {
-            let v = logging.get(this.key("rpm"), 0)
+            let v = this.log.get("rpm", 0)
             return v !== undefined ? v : this.readFloat(REG_READBACK_RPM)
         }
 
@@ -280,7 +280,7 @@ namespace unitBldc {
         //% weight=85
         //% group="Readings"
         getFreqReadback(): number {
-            return logging.get(this.key("rpm"), 0) !== undefined
+            return this.log.get("rpm", 0) !== undefined
                 ? (this.getRPM() * this.getMotorPolePairs()) / 60
                 : this.readFloat(REG_READBACK_FREQ)
         }
@@ -293,7 +293,7 @@ namespace unitBldc {
         //% weight=84
         //% group="Readings"
         getRpmReadbackString(): string {
-            return logging.get(this.key("rpm"), 0) !== undefined
+            return this.log.get("rpm", 0) !== undefined
                 ? "" + this.getRpmReadback()
                 : this.bufferToString(this.readBytes(REG_READBACK_RPM_STRING, 16))
         }
@@ -306,7 +306,7 @@ namespace unitBldc {
         //% weight=83
         //% group="Readings"
         getFreqReadbackString(): string {
-            return logging.get(this.key("rpm"), 0) !== undefined
+            return this.log.get("rpm", 0) !== undefined
                 ? "" + this.getFreqReadback()
                 : this.bufferToString(this.readBytes(REG_READBACK_FREQ_STRING, 16))
         }
@@ -321,7 +321,7 @@ namespace unitBldc {
         //% weight=80
         //% group="PID Tuning"
         setPID(p: number, i: number, d: number): void {
-            if (logging.set(this.key("pid_p"), p) && logging.set(this.key("pid_i"), i) && logging.set(this.key("pid_d"), d)) return
+            if (this.log.set("pid_p", p) && this.log.set("pid_i", i) && this.log.set("pid_d", d)) return
             let out = pins.createBuffer(13)
             out.setNumber(NumberFormat.UInt8LE, 0, REG_PID)
             out.setNumber(NumberFormat.Int32LE, 1, Math.round(p * 100))
@@ -338,9 +338,7 @@ namespace unitBldc {
         //% weight=79
         //% group="PID Tuning"
         getPID(): number[] {
-            if (logging.get(this.key("pid_p"), 0) !== undefined) {
-                return [this.getKp(), this.getKi(), this.getKd()]
-            }
+            if (this.log.get("pid_p", 0) !== undefined) return [this.getKp(), this.getKi(), this.getKd()]
             let buf = this.readBytes(REG_PID, 12)
             let p = buf.getNumber(NumberFormat.Int32LE, 0) / 100.0
             let i = buf.getNumber(NumberFormat.Int32LE, 4) / 100.0
@@ -357,7 +355,7 @@ namespace unitBldc {
         //% weight=78
         //% group="PID Tuning"
         getKp(): number {
-            let v = logging.get(this.key("pid_p"), 0)
+            let v = this.log.get("pid_p", 0)
             return v !== undefined ? v : this.readBytes(REG_PID, 12).getNumber(NumberFormat.Int32LE, 0) / 100.0
         }
 
@@ -370,7 +368,7 @@ namespace unitBldc {
         //% weight=77
         //% group="PID Tuning"
         getKi(): number {
-            let v = logging.get(this.key("pid_i"), 0)
+            let v = this.log.get("pid_i", 0)
             return v !== undefined ? v : this.readBytes(REG_PID, 12).getNumber(NumberFormat.Int32LE, 4) / 100.0
         }
 
@@ -383,7 +381,7 @@ namespace unitBldc {
         //% weight=76
         //% group="PID Tuning"
         getKd(): number {
-            let v = logging.get(this.key("pid_d"), 0)
+            let v = this.log.get("pid_d", 0)
             return v !== undefined ? v : this.readBytes(REG_PID, 12).getNumber(NumberFormat.Int32LE, 8) / 100.0
         }
 
@@ -396,7 +394,7 @@ namespace unitBldc {
         //% weight=75
         //% group="Readings"
         getMotorStatus(): BldcMotorStatus {
-            return logging.get(this.key("rpm"), 0) !== undefined
+            return this.log.get("rpm", 0) !== undefined
                 ? (this.getPWM() > 0 || this.getRPM() != 0) ? BldcMotorStatus.Running : BldcMotorStatus.Standby
                 : this.readBytes(REG_MOTOR_STATUS, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
         }
@@ -409,7 +407,7 @@ namespace unitBldc {
         //% weight=70
         //% group="Configuration"
         setMotorModel(model: BldcMotorModel): void {
-            if (logging.set(this.key("motorModel"), model)) return
+            if (this.log.set("motorModel", model)) return
             this.writeBytes(REG_MOTOR_CONFIG, [model])
         }
 
@@ -421,7 +419,7 @@ namespace unitBldc {
         //% weight=69
         //% group="Configuration"
         getMotorModel(): BldcMotorModel {
-            let v = logging.get(this.key("motorModel"), BldcMotorModel.LowSpeed)
+            let v = this.log.get("motorModel", BldcMotorModel.LowSpeed)
             return v !== undefined ? v : this.readBytes(REG_MOTOR_CONFIG, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorModel
         }
 
@@ -435,7 +433,7 @@ namespace unitBldc {
         //% weight=68
         //% group="Configuration"
         setMotorPolePairs(pairs: number): void {
-            if (logging.set(this.key("polePairs"), pairs)) return
+            if (this.log.set("polePairs", pairs)) return
             this.writeBytes(REG_MOTOR_CONFIG + 1, [pairs])
         }
 
@@ -447,7 +445,7 @@ namespace unitBldc {
         //% weight=67
         //% group="Configuration"
         getMotorPolePairs(): number {
-            let v = logging.get(this.key("polePairs"), 7)
+            let v = this.log.get("polePairs", 7)
             return v !== undefined ? v : this.readBytes(REG_MOTOR_CONFIG + 1, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
@@ -460,7 +458,7 @@ namespace unitBldc {
         //% weight=60
         //% group="Configuration"
         saveMotorDataToFlash(): void {
-            if (logging.log("config save to flash requested for " + this.address)) return
+            if (this.log.log("config save to flash requested for " + this.address)) return
             this.writeBytes(REG_SAVE_TO_FLASH, [1])
         }
 
@@ -472,7 +470,7 @@ namespace unitBldc {
         //% weight=50
         //% group="Setup"
         getFirmwareVersion(): number {
-            let v = logging.get(this.key("firmwareVersion"), 0)
+            let v = this.log.get("firmwareVersion", 0)
             return v !== undefined ? v : this.readBytes(REG_FIRMWARE_VERSION, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
@@ -488,13 +486,15 @@ namespace unitBldc {
         //% weight=40
         //% group="Setup"
         setI2CAddress(addr: number): boolean {
-            if (logging.log("I2C address changed from " + this.address + " to " + addr)) {
+            if (this.log.log("I2C address changed from " + this.address + " to " + addr)) {
                 this.address = addr
+                this.log.setMoniker("Motor " + addr)
                 return true
             }
             let ok = this.writeBytes(REG_I2C_ADDRESS, [addr])
             if (ok) {
                 this.address = addr
+                this.log.setMoniker("Motor " + addr)
             }
             return ok
         }
@@ -504,7 +504,7 @@ namespace unitBldc {
          * call via JavaScript if needed: motor.jumpBootloader()
          */
         jumpBootloader(): void {
-            if (logging.log("bootloader jump requested for " + this.address)) return
+            if (this.log.log("bootloader jump requested for " + this.address)) return
             this.writeBytes(REG_JUMP_BOOTLOADER, [1])
         }
     }

@@ -8,7 +8,7 @@
     },
     "files": [
         "main.ts",
-        "logging.ts",
+        "unitBldcLog.ts",
         "README.md"
     ],
     "testFiles": [
