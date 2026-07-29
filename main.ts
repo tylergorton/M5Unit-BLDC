@@ -95,11 +95,11 @@ namespace unitBldc {
      */
     export class BldcMotor {
         private address: number
-        private log: unitBldcLog.InstanceLog
+        private log: unitBldcLog.Logger
 
         constructor(addr: number) {
             this.address = addr
-            this.log = new unitBldcLog.InstanceLog("Motor " + addr)
+            this.log = new unitBldcLog.Logger("Motor " + addr)
         }
 
         private writeBytes(reg: number, data: number[]): boolean {
@@ -338,7 +338,7 @@ namespace unitBldc {
         //% weight=79
         //% group="PID Tuning"
         getPID(): number[] {
-            if (this.log.get("pid_p", 0) !== undefined) return [this.getKp(), this.getKi(), this.getKd()]
+            if (this.log.msg("fetching PID")) return [this.getKp(), this.getKi(), this.getKd()]
             let buf = this.readBytes(REG_PID, 12)
             let p = buf.getNumber(NumberFormat.Int32LE, 0) / 100.0
             let i = buf.getNumber(NumberFormat.Int32LE, 4) / 100.0
@@ -394,9 +394,8 @@ namespace unitBldc {
         //% weight=75
         //% group="Readings"
         getMotorStatus(): BldcMotorStatus {
-            return this.log.get("rpm", 0) !== undefined
-                ? (this.getPWM() > 0 || this.getRPM() != 0) ? BldcMotorStatus.Running : BldcMotorStatus.Standby
-                : this.readBytes(REG_MOTOR_STATUS, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
+            if (this.log.msg("fetching status")) return (this.getPWM() > 0 || this.getRPM() != 0) ? BldcMotorStatus.Running : BldcMotorStatus.Standby
+            return this.readBytes(REG_MOTOR_STATUS, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
         }
 
         /**
@@ -458,7 +457,7 @@ namespace unitBldc {
         //% weight=60
         //% group="Configuration"
         saveMotorDataToFlash(): void {
-            if (this.log.log("config save to flash requested for " + this.address)) return
+            if (this.log.msg("config saved to flash")) return
             this.writeBytes(REG_SAVE_TO_FLASH, [1])
         }
 
@@ -486,7 +485,7 @@ namespace unitBldc {
         //% weight=40
         //% group="Setup"
         setI2CAddress(addr: number): boolean {
-            if (this.log.log("I2C address changed from " + this.address + " to " + addr)) {
+            if (this.log.msg("I2C address changed to " + addr)) {
                 this.address = addr
                 this.log.setMoniker("Motor " + addr)
                 return true
@@ -504,7 +503,7 @@ namespace unitBldc {
          * call via JavaScript if needed: motor.jumpBootloader()
          */
         jumpBootloader(): void {
-            if (this.log.log("bootloader jump requested for " + this.address)) return
+            if (this.log.msg("bootloader jump")) return
             this.writeBytes(REG_JUMP_BOOTLOADER, [1])
         }
     }

@@ -3,7 +3,7 @@ namespace unitBldcLog {
         return control.deviceName() === "sim-"
     }
 
-    function simLog(msg: string): void {
+    function log(msg: string): void {
         if (isSimulator()) console.log(msg)
     }
 
@@ -13,7 +13,7 @@ namespace unitBldcLog {
      * motors (no key collisions possible) and no shared global namespace state
      * that another extension's own code could ever collide with.
      */
-    export class InstanceLog {
+    export class Logger {
         private state: { [key: string]: any } = {}
         private moniker: string
 
@@ -44,11 +44,11 @@ namespace unitBldcLog {
          * prints when running in the simulator. Returns true when logging IS
          * active (i.e. we're in the simulator), so a caller can use the return
          * value as an early-exit guard:
-         * if (this.log.log("...")) return
+         * if (this.log.msg("...")) return
          * <real I2C call, only reached when NOT in the simulator>
          */
-        log(message: string): boolean {
-            simLog(this.prefixed(`[DEBUG] ${message}`))
+        msg(message: string): boolean {
+            log(this.prefixed(`[DEBUG] ${message}`))
             return isSimulator()
         }
 
@@ -61,7 +61,7 @@ namespace unitBldcLog {
          */
         set(key: string, value: any): boolean {
             this.state[key] = value
-            simLog(this.prefixed(`[STATE] ${key} = ${value}`))
+            log(this.prefixed(`[STATE] ${key} = ${value}`))
             return isSimulator()
         }
 
@@ -74,26 +74,21 @@ namespace unitBldcLog {
          * needing a separate isSimulator() check.
          */
         get(key: string, fallback: any): any {
-            if (!isSimulator()) {
-                return undefined
-            }
-            if (this.state[key] !== undefined) {
+            if (!isSimulator()) return undefined
+            
+            if (key in this.state) {
                 let val = this.state[key]
-                simLog(this.prefixed(`[GET] ${key} => ${val}`))
+                log(this.prefixed(`[GET] ${key} => ${val}`))
                 return val
             }
-            simLog(this.prefixed(`[DEFAULT] ${key} => ${fallback}`))
+            log(this.prefixed(`[DEFAULT] ${key} => ${fallback}`))
             return fallback
         }
 
         reportState(): void {
-            simLog(this.prefixed("=== STATE REPORT ==="))
-            let keys = Object.keys(this.state)
-            for (let idx = 0; idx < keys.length; idx++) {
-                let k = keys[idx]
-                simLog(this.prefixed(`${k} = ${this.state[k]}`))
-            }
-            simLog(this.prefixed("========================"))
+            log(this.prefixed("=== STATE REPORT ==="))
+            for (let k in this.state) log(this.prefixed(`${k} = ${this.state[k]}`))
+            log(this.prefixed("========================"))
         }
     }
 }
