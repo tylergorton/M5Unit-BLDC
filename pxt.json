@@ -8,7 +8,7 @@
     },
     "files": [
         "main.ts",
-        "simulator.ts",
+        "logging.ts",
         "README.md"
     ],
     "testFiles": [
