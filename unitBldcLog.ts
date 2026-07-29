@@ -1,33 +1,27 @@
 namespace unitBldcLog {
-    function isSimulator(): boolean {
-        return control.deviceName() === "sim-"
-    }
-
-    function simLog(msg: string): void {
-        if (isSimulator()) console.log(msg)
-    }
-
     /**
      * Holds one motor's worth of simulator-only state privately - each
      * BldcMotor owns its own instance, so there's no shared dictionary between
      * motors (no key collisions possible) and no shared global namespace state
      * that another extension's own code could ever collide with.
      */
-    export class InstanceLog {
+    export class Logger {
+        private suppressed: boolean
         private state: { [key: string]: any } = {}
         private moniker: string
 
         /**
-         * @param moniker optional label prefixed onto every log line from this
+         * @param monikeal  onto every log line from this
          * instance, e.g. "Motor 101", so multiple instances' output stays easy
          * to tell apart in the Console/data view.
          */
         constructor(moniker: string = "") {
             this.moniker = moniker
+            this.suppressed = control.deviceName() === "sim-"
         }
 
-        private prefixed(msg: string): string {
-            return this.moniker ? this.moniker + ": " + msg : msg
+        private log(msg: string): void {
+            console.log(this.moniker ? this.moniker + ": " + msg : msg)
         }
 
         /**
@@ -44,12 +38,13 @@ namespace unitBldcLog {
          * prints when running in the simulator. Returns true when logging IS
          * active (i.e. we're in the simulator), so a caller can use the return
          * value as an early-exit guard:
-         * if (this.log.log("...")) return
+         * if (this.log.msg("...")) return
          * <real I2C call, only reached when NOT in the simulator>
          */
-        log(message: string): boolean {
-            simLog(this.prefixed(`[DEBUG] ${message}`))
-            return isSimulator()
+        msg(message: string): boolean {
+            if (this.suppressed) return false
+            this.log(`[DEBUG] ${message}`)
+            return true
         }
 
         /**
@@ -60,9 +55,10 @@ namespace unitBldcLog {
          * <real I2C write, only reached when NOT in the simulator>
          */
         set(key: string, value: any): boolean {
+            if (this.suppressed) return false
             this.state[key] = value
-            simLog(this.prefixed(`[STATE] ${key} = ${value}`))
-            return isSimulator()
+            this.log(`[STATE] ${key} = ${value}`)
+            return true
         }
 
         /**
@@ -74,26 +70,26 @@ namespace unitBldcLog {
          * needing a separate isSimulator() check.
          */
         get(key: string, fallback: any): any {
-            if (!isSimulator()) {
-                return undefined
-            }
+            if (this.suppressed) return undefined
+            
             if (this.state[key] !== undefined) {
                 let val = this.state[key]
-                simLog(this.prefixed(`[GET] ${key} => ${val}`))
+                this.log(`[GET] ${key} => ${val}`)
                 return val
             }
-            simLog(this.prefixed(`[DEFAULT] ${key} => ${fallback}`))
+            this.log(`[DEFAULT] ${key} => ${fallback}`)
             return fallback
         }
 
         reportState(): void {
-            simLog(this.prefixed("=== STATE REPORT ==="))
+            if (this.suppressed) return
+            this.log("=== STATE REPORT ===")
             let keys = Object.keys(this.state)
             for (let idx = 0; idx < keys.length; idx++) {
                 let k = keys[idx]
-                simLog(this.prefixed(`${k} = ${this.state[k]}`))
+                this.log(`${k} = ${this.state[k]}`)
             }
-            simLog(this.prefixed("========================"))
+            this.log("========================")
         }
     }
 }
