@@ -9,15 +9,18 @@
  * Each physical Unit BLDC is represented as a BldcMotor object, so multiple motors
  * (each with its own I2C address) can be controlled independently on the same bus.
  *
- * SIMULATOR SUPPORT: uses logging.ts (see that file) instead of shim/simFiles.
- * Every setter does the real I2C write AND calls logging.log(key, value), which
- * only actually prints when running in the simulator (logging.ts detects this via
- * control.deviceDalVersion() === ""). "Setting" getters (mode, direction, PWM,
- * target RPM, PID, motor model, pole pairs) just return logging.log(key) - the
- * last value set - rather than re-reading hardware, so there's no environment
- * branching anywhere in this file. True sensor readbacks (RPM/frequency readback,
- * motor status, firmware version) always do a real I2C read, since they reflect
- * the device's own behavior rather than something we set.
+ * SIMULATOR SUPPORT: uses logging.ts (see that file), not shim/simFiles. Every
+ * setter does the real I2C write AND calls logging.set(key, value), which only
+ * actually prints when running in the simulator. logging.isSimulator() stays
+ * private to logging.ts - this file only ever touches logging.log() (plain text
+ * messages), logging.set(), and logging.get(), never checking the environment
+ * directly itself. get(key, fallback) returns undefined outright when not in the
+ * simulator (meaning "go do a real read"), or the logged value/fallback when it
+ * is, so a single ternary flows from key value, to fallback value, to real I2C
+ * read. A few composite getters (frequency readback, the *ReadbackString
+ * variants, PID array, motor status) reuse an existing key purely to probe
+ * environment via that same undefined-or-not signal, rather than duplicating a
+ * dedicated key just to ask "am I in the simulator".
  */
 
 //% color="#AA278D" icon="\uf085" block="Unit BLDC" weight=100
@@ -131,6 +134,8 @@ namespace unitBldc {
 
         /**
          * Test whether this motor responds on the I2C bus at its current address.
+         * Always a real hardware probe - not routed through logging.ts, since
+         * there's no "logged value" that would make sense for a live bus check.
          */
         //% blockId=unitbldc_is_connected
         //% block="%motor|is connected"
@@ -149,7 +154,7 @@ namespace unitBldc {
         //% group="Motor Control"
         setMode(mode: BldcMode): void {
             this.writeBytes(REG_MODE, [mode])
-            logging.log(this.key("mode"), mode)
+            logging.set(this.key("mode"), mode)
         }
 
         /**
@@ -160,7 +165,8 @@ namespace unitBldc {
         //% weight=94
         //% group="Motor Control"
         getMode(): BldcMode {
-            return (logging.log(this.key("mode")) || BldcMode.OpenLoop) as BldcMode
+            let v = logging.get(this.key("mode"), BldcMode.OpenLoop)
+            return v !== undefined ? v : this.readBytes(REG_MODE, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
         /**
@@ -172,7 +178,7 @@ namespace unitBldc {
         //% group="Motor Control"
         setDirection(dir: BldcDirection): void {
             this.writeBytes(REG_DIR, [dir])
-            logging.log(this.key("direction"), dir)
+            logging.set(this.key("direction"), dir)
         }
 
         /**
@@ -183,7 +189,8 @@ namespace unitBldc {
         //% weight=92
         //% group="Motor Control"
         getDirection(): BldcDirection {
-            return (logging.log(this.key("direction")) || BldcDirection.Forward) as BldcDirection
+            let v = logging.get(this.key("direction"), BldcDirection.Forward)
+            return v !== undefined ? v : this.readBytes(REG_DIR, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
         /**
@@ -201,7 +208,7 @@ namespace unitBldc {
             out.setNumber(NumberFormat.UInt8LE, 0, REG_PWM)
             out.setNumber(NumberFormat.UInt16LE, 1, duty)
             pins.i2cWriteBuffer(this.address, out, false)
-            logging.log(this.key("pwm"), duty)
+            logging.set(this.key("pwm"), duty)
         }
 
         /**
@@ -212,7 +219,8 @@ namespace unitBldc {
         //% weight=89
         //% group="Motor Control"
         getPWM(): number {
-            return logging.log(this.key("pwm")) || 0
+            let v = logging.get(this.key("pwm"), 0)
+            return v !== undefined ? v : this.readBytes(REG_PWM, 2).getNumber(NumberFormat.UInt16LE, 0)
         }
 
         /**
@@ -225,7 +233,7 @@ namespace unitBldc {
         //% group="Motor Control"
         setRPM(rpm: number): void {
             this.writeFloat(REG_SET_RPM, rpm)
-            logging.log(this.key("rpm"), rpm)
+            logging.set(this.key("rpm"), rpm)
         }
 
         /**
@@ -236,31 +244,39 @@ namespace unitBldc {
         //% weight=87
         //% group="Motor Control"
         getRPM(): number {
-            return logging.log(this.key("rpm")) || 0
+            let v = logging.get(this.key("rpm"), 0)
+            return v !== undefined ? v : this.readFloat(REG_SET_RPM)
         }
 
         /**
-         * Get the real time RPM readback from the motor. Always a real I2C read -
-         * this reflects the device's own measured speed, not something we set.
+         * Get the real time RPM readback from the motor. In the simulator this
+         * reuses the target RPM's logged value/default, since there's no physical
+         * motor to actually measure.
          */
         //% blockId=unitbldc_get_rpm_readback
         //% block="%motor|RPM readback"
         //% weight=86
         //% group="Readings"
         getRpmReadback(): number {
-            return this.readFloat(REG_READBACK_RPM)
+            let v = logging.get(this.key("rpm"), 0)
+            return v !== undefined ? v : this.readFloat(REG_READBACK_RPM)
         }
 
         /**
-         * Get the real time frequency readback from the motor (Hz). Always a real
-         * I2C read - this reflects the device's own measurement.
+         * Get the real time frequency readback from the motor (Hz). In the
+         * simulator this is derived from the target RPM and pole pairs, using the
+         * same relationship as the real device: RPM = frequency * 60 / pole pairs.
          */
         //% blockId=unitbldc_get_freq_readback
         //% block="%motor|frequency readback (Hz)"
         //% weight=85
         //% group="Readings"
         getFreqReadback(): number {
-            return this.readFloat(REG_READBACK_FREQ)
+            let probe = logging.get(this.key("rpm"), 0)
+            if (probe === undefined) {
+                return this.readFloat(REG_READBACK_FREQ)
+            }
+            return (this.getRPM() * this.getMotorPolePairs()) / 60
         }
 
         /**
@@ -271,7 +287,11 @@ namespace unitBldc {
         //% weight=84
         //% group="Readings"
         getRpmReadbackString(): string {
-            return this.bufferToString(this.readBytes(REG_READBACK_RPM_STRING, 16))
+            let probe = logging.get(this.key("rpm"), 0)
+            if (probe === undefined) {
+                return this.bufferToString(this.readBytes(REG_READBACK_RPM_STRING, 16))
+            }
+            return "" + this.getRpmReadback()
         }
 
         /**
@@ -282,7 +302,11 @@ namespace unitBldc {
         //% weight=83
         //% group="Readings"
         getFreqReadbackString(): string {
-            return this.bufferToString(this.readBytes(REG_READBACK_FREQ_STRING, 16))
+            let probe = logging.get(this.key("rpm"), 0)
+            if (probe === undefined) {
+                return this.bufferToString(this.readBytes(REG_READBACK_FREQ_STRING, 16))
+            }
+            return "" + this.getFreqReadback()
         }
 
         /**
@@ -301,9 +325,9 @@ namespace unitBldc {
             out.setNumber(NumberFormat.Int32LE, 5, Math.round(i * 100))
             out.setNumber(NumberFormat.Int32LE, 9, Math.round(d * 100))
             pins.i2cWriteBuffer(this.address, out, false)
-            logging.log(this.key("pid_p"), p)
-            logging.log(this.key("pid_i"), i)
-            logging.log(this.key("pid_d"), d)
+            logging.set(this.key("pid_p"), p)
+            logging.set(this.key("pid_i"), i)
+            logging.set(this.key("pid_d"), d)
         }
 
         /**
@@ -314,6 +338,14 @@ namespace unitBldc {
         //% weight=79
         //% group="PID Tuning"
         getPID(): number[] {
+            let probe = logging.get(this.key("pid_p"), 0)
+            if (probe === undefined) {
+                let buf = this.readBytes(REG_PID, 12)
+                let p = buf.getNumber(NumberFormat.Int32LE, 0) / 100.0
+                let i = buf.getNumber(NumberFormat.Int32LE, 4) / 100.0
+                let d = buf.getNumber(NumberFormat.Int32LE, 8) / 100.0
+                return [p, i, d]
+            }
             return [this.getKp(), this.getKi(), this.getKd()]
         }
 
@@ -326,7 +358,8 @@ namespace unitBldc {
         //% weight=78
         //% group="PID Tuning"
         getKp(): number {
-            return logging.log(this.key("pid_p")) || 0
+            let v = logging.get(this.key("pid_p"), 0)
+            return v !== undefined ? v : this.readBytes(REG_PID, 12).getNumber(NumberFormat.Int32LE, 0) / 100.0
         }
 
         /**
@@ -338,7 +371,8 @@ namespace unitBldc {
         //% weight=77
         //% group="PID Tuning"
         getKi(): number {
-            return logging.log(this.key("pid_i")) || 0
+            let v = logging.get(this.key("pid_i"), 0)
+            return v !== undefined ? v : this.readBytes(REG_PID, 12).getNumber(NumberFormat.Int32LE, 4) / 100.0
         }
 
         /**
@@ -350,18 +384,24 @@ namespace unitBldc {
         //% weight=76
         //% group="PID Tuning"
         getKd(): number {
-            return logging.log(this.key("pid_d")) || 0
+            let v = logging.get(this.key("pid_d"), 0)
+            return v !== undefined ? v : this.readBytes(REG_PID, 12).getNumber(NumberFormat.Int32LE, 8) / 100.0
         }
 
         /**
-         * Get the current motor status. Always a real I2C read.
+         * Get the current motor status. In the simulator this is derived from
+         * whether a nonzero PWM duty or target RPM is currently set.
          */
         //% blockId=unitbldc_get_motor_status
         //% block="%motor|status"
         //% weight=75
         //% group="Readings"
         getMotorStatus(): BldcMotorStatus {
-            return this.readBytes(REG_MOTOR_STATUS, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
+            let probe = logging.get(this.key("rpm"), 0)
+            if (probe === undefined) {
+                return this.readBytes(REG_MOTOR_STATUS, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
+            }
+            return (this.getPWM() > 0 || this.getRPM() != 0) ? BldcMotorStatus.Running : BldcMotorStatus.Standby
         }
 
         /**
@@ -373,7 +413,7 @@ namespace unitBldc {
         //% group="Configuration"
         setMotorModel(model: BldcMotorModel): void {
             this.writeBytes(REG_MOTOR_CONFIG, [model])
-            logging.log(this.key("motorModel"), model)
+            logging.set(this.key("motorModel"), model)
         }
 
         /**
@@ -384,7 +424,8 @@ namespace unitBldc {
         //% weight=69
         //% group="Configuration"
         getMotorModel(): BldcMotorModel {
-            return (logging.log(this.key("motorModel")) || BldcMotorModel.LowSpeed) as BldcMotorModel
+            let v = logging.get(this.key("motorModel"), BldcMotorModel.LowSpeed)
+            return v !== undefined ? v : this.readBytes(REG_MOTOR_CONFIG, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
         /**
@@ -398,7 +439,7 @@ namespace unitBldc {
         //% group="Configuration"
         setMotorPolePairs(pairs: number): void {
             this.writeBytes(REG_MOTOR_CONFIG + 1, [pairs])
-            logging.log(this.key("polePairs"), pairs)
+            logging.set(this.key("polePairs"), pairs)
         }
 
         /**
@@ -409,7 +450,8 @@ namespace unitBldc {
         //% weight=67
         //% group="Configuration"
         getMotorPolePairs(): number {
-            return logging.log(this.key("polePairs")) || 0
+            let v = logging.get(this.key("polePairs"), 7)
+            return v !== undefined ? v : this.readBytes(REG_MOTOR_CONFIG + 1, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
         /**
@@ -426,14 +468,15 @@ namespace unitBldc {
         }
 
         /**
-         * Get the firmware version of this Unit BLDC. Always a real I2C read.
+         * Get the firmware version of this Unit BLDC.
          */
         //% blockId=unitbldc_get_firmware_version
         //% block="%motor|firmware version"
         //% weight=50
         //% group="Setup"
         getFirmwareVersion(): number {
-            return this.readBytes(REG_FIRMWARE_VERSION, 1).getNumber(NumberFormat.UInt8LE, 0)
+            let v = logging.get(this.key("firmwareVersion"), 0)
+            return v !== undefined ? v : this.readBytes(REG_FIRMWARE_VERSION, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
         /**
