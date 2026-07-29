@@ -77,7 +77,7 @@ namespace unitBldcLog {
             if (!isSimulator()) {
                 return undefined
             }
-            if (key in this.state) {
+            if (this.state[key] !== undefined) {
                 let val = this.state[key]
                 simLog(this.prefixed(`[GET] ${key} => ${val}`))
                 return val
@@ -85,10 +85,11 @@ namespace unitBldcLog {
             simLog(this.prefixed(`[DEFAULT] ${key} => ${fallback}`))
             return fallback
         }
-
+ 
         reportState(): void {
             simLog(this.prefixed("=== STATE REPORT ==="))
-            for (let k in this.state) {
+            for (let idx = 0; idx < this.keys.length; idx++) {
+                let k = this.keys[idx]
                 simLog(this.prefixed(`${k} = ${this.state[k]}`))
             }
             simLog(this.prefixed("========================"))
