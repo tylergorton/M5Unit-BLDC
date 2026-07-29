@@ -17,7 +17,7 @@ namespace unitBldcLog {
          */
         constructor(moniker: string = "") {
             this.moniker = moniker
-            this.suppressed = control.deviceName() === "sim-"
+            this.suppressed = control.deviceName() !== "sim-"
         }
 
         /**
