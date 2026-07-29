@@ -8,10 +8,14 @@
     },
     "files": [
         "main.ts",
+        "unitBldcLog.ts",
         "README.md"
     ],
     "testFiles": [
         "test.ts"
     ],
-    "public": true
+    "public": true,
+    "supportedTargets": [
+        "microbit"
+    ]
 }

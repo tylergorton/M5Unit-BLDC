@@ -34,6 +34,31 @@ need to give each one a unique address, **one motor at a time**:
 > settings to survive a reboot - everything else (mode, direction, PWM, target RPM) is not persisted and
 > needs to be re-set each time your program starts.
 
+## Simulator support
+
+There's no real motor to talk to in the browser simulator. Every hardware-facing operation in `main.ts`
+is a small module-level function tagged `//% shim=unitBldcSim::xxx` - on a real board that's just an
+annotation with no effect, and the plain TypeScript body underneath (an ordinary I2C read/write) is what
+actually runs. In the simulator, MakeCode instead uses the alternate implementation registered in
+`simulator.ts`, which is only ever compiled into the simulator bundle (see `simFiles` in `pxt.json`,
+never shipped to the real board).
+
+`simulator.ts` keeps a shadow of every motor's settings (keyed by I2C address) and writes a line to the
+Console/data view for each change, using the same `board().writeSerial(...)` call that `serial.writeLine`
+itself uses on a real board - so no separate viewer is needed, just click **Show console device** (or
+**Show data**) below the simulator panel. Reading a setting back (`target RPM`, `PID values`, `motor
+model`, etc.) returns whatever was last set, so you can confirm your program's logic before ever touching
+real hardware. Sensor-style readbacks that aren't user-set (`RPM readback`, `frequency readback`,
+`status`) are approximated from the current setpoint rather than fabricated - `frequency readback` in
+particular uses the same relationship as the real device (`RPM = frequency * 60 / pole pairs`), just
+solved the other way around.
+
+This is plain TypeScript - no native C++ anywhere. The `shim`/`simFiles` mechanism only requires C++ when
+the hardware side itself needs a *different* implementation than what's written in `main.ts` (e.g. a
+sensor needing low-level native access); since our hardware implementation is the same ordinary TypeScript
+either way, the plain body serves as the real hardware code, and `simFiles` only supplies an alternate
+implementation for the browser.
+
 ## Usage
 
 ```blocks
@@ -88,6 +113,8 @@ firmware-update-only operation not meant for normal block programs.
 - `getPID(float*, float*, float*)` returned three values by pointer in C++. The block version returns a
   `number[]` array `[Kp, Ki, Kd]`, plus three small convenience blocks (`PID Kp`/`Ki`/`Kd`) for reading
   back a single term.
+- Mock mode (see above) is new behavior not present in the original driver, added so the extension is
+  usable in the browser simulator without real hardware attached.
 
 ## License
 
