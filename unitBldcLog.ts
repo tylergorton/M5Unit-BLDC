@@ -1,6 +1,6 @@
 namespace unitBldcLog {
     function isSimulator(): boolean {
-        return control.deviceDalVersion() === ""
+        return control.deviceName() === "sim-"
     }
 
     function simLog(msg: string): void {
