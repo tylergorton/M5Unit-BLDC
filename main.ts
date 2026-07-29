@@ -166,7 +166,7 @@ namespace unitBldc {
         //% group="Motor Control"
         getMode(): BldcMode {
             let v = logging.get(this.key("mode"), BldcMode.OpenLoop)
-            return v !== undefined ? v : this.readBytes(REG_MODE, 1).getNumber(NumberFormat.UInt8LE, 0)
+            return v !== undefined ? v : this.readBytes(REG_MODE, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMode
         }
 
         /**
@@ -190,7 +190,7 @@ namespace unitBldc {
         //% group="Motor Control"
         getDirection(): BldcDirection {
             let v = logging.get(this.key("direction"), BldcDirection.Forward)
-            return v !== undefined ? v : this.readBytes(REG_DIR, 1).getNumber(NumberFormat.UInt8LE, 0)
+            return v !== undefined ? v : this.readBytes(REG_DIR, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcDirection
         }
 
         /**
@@ -425,7 +425,7 @@ namespace unitBldc {
         //% group="Configuration"
         getMotorModel(): BldcMotorModel {
             let v = logging.get(this.key("motorModel"), BldcMotorModel.LowSpeed)
-            return v !== undefined ? v : this.readBytes(REG_MOTOR_CONFIG, 1).getNumber(NumberFormat.UInt8LE, 0)
+            return v !== undefined ? v : this.readBytes(REG_MOTOR_CONFIG, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorModel
         }
 
         /**
