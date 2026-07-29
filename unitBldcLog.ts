@@ -85,11 +85,12 @@ namespace unitBldcLog {
             simLog(this.prefixed(`[DEFAULT] ${key} => ${fallback}`))
             return fallback
         }
- 
+
         reportState(): void {
             simLog(this.prefixed("=== STATE REPORT ==="))
-            for (let idx = 0; idx < this.keys.length; idx++) {
-                let k = this.keys[idx]
+            let keys = Object.keys(this.state)
+            for (let idx = 0; idx < keys.length; idx++) {
+                let k = keys[idx]
                 simLog(this.prefixed(`${k} = ${this.state[k]}`))
             }
             simLog(this.prefixed("========================"))
