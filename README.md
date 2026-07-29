@@ -15,11 +15,13 @@ need to give each one a unique address, **one motor at a time**:
 
 1. Wire up **only one** motor to your micro:bit.
 2. Flash a small one-time setup program:
-   ```typescript
-   let setup = unitBldc.connect(0x65)
-   setup.setI2CAddress(0x6A)
-   setup.saveMotorDataToFlash()
-   ```
+
+    ```
+    let setup = unitBldc.connect(0x65)
+    setup.setI2CAddress(0x6A)
+    setup.saveMotorDataToFlash()
+    ```
+
 3. Power cycle the motor unit, then confirm the new address stuck, e.g. by changing the setup
    program to `unitBldc.connect(0x6A)` and checking `setup.isConnected()`.
 4. Repeat for any additional motors, giving each a different address (or leave one motor at the
@@ -36,32 +38,42 @@ need to give each one a unique address, **one motor at a time**:
 
 ## Simulator support
 
-There's no real motor to talk to in the browser simulator. Every hardware-facing operation in `main.ts`
-is a small module-level function tagged `//% shim=unitBldcSim::xxx` - on a real board that's just an
-annotation with no effect, and the plain TypeScript body underneath (an ordinary I2C read/write) is what
-actually runs. In the simulator, MakeCode instead uses the alternate implementation registered in
-`simulator.ts`, which is only ever compiled into the simulator bundle (see `simFiles` in `pxt.json`,
-never shipped to the real board).
+There's no real motor to talk to in the browser simulator, so every hardware-facing method in
+`main.ts` is backed by a small runtime check rather than a native simulator implementation. Each
+`BldcMotor` owns a private `unitBldcLog.Logger` instance (from `unitBldcLog.ts`), constructed with a
+moniker like `"Motor 101"` so multiple motors' output stays easy to tell apart. The `Logger` detects
+the simulator itself (`control.deviceName() === "sim-"`) and exposes that as the return value of its
+own methods, so callers never need a separate environment check:
 
-`simulator.ts` keeps a shadow of every motor's settings (keyed by I2C address) and writes a line to the
-Console/data view for each change, using the same `board().writeSerial(...)` call that `serial.writeLine`
-itself uses on a real board - so no separate viewer is needed, just click **Show console device** (or
-**Show data**) below the simulator panel. Reading a setting back (`target RPM`, `PID values`, `motor
-model`, etc.) returns whatever was last set, so you can confirm your program's logic before ever touching
-real hardware. Sensor-style readbacks that aren't user-set (`RPM readback`, `frequency readback`,
-`status`) are approximated from the current setpoint rather than fabricated - `frequency readback` in
-particular uses the same relationship as the real device (`RPM = frequency * 60 / pole pairs`), just
-solved the other way around.
+- **Setters** (`setRPM`, `setPWM`, `setMode`, etc.) call `this.log.set(key, value)`, which stores the
+  value and returns `true` when running in the simulator. Each setter uses this as an early-return
+  guard - `if (this.log.set(key, value)) return` - so the real I2C write below it only runs on actual
+  hardware.
+- **Getters** (`getRPM`, `getPWM`, etc.) call `this.log.get(key, fallback)`, which returns `undefined`
+  outright when NOT in the simulator (a signal to go do a real I2C read), or the stored value/fallback
+  when it is. A single ternary at each call site flows from stored value, to fallback, to real read.
+- **Action methods** with no natural stored key (address changes, flash saves, bootloader jumps) use
+  `this.log.msg(message)` instead, following the same true/false convention as `set()`.
+- A few composite getters with no single natural key of their own - `PID values`, `status`, and the
+  `*ReadbackString` variants - reuse an existing call (`msg()`, or the `rpm` key) purely as an
+  environment probe, then derive a sensible value from what's already stored rather than fabricating
+  one: `frequency readback`, for example, is derived from the target RPM and pole pairs using the same
+  relationship the real device documents (`RPM = frequency * 60 / pole pairs`), just solved the other
+  way around.
 
-This is plain TypeScript - no native C++ anywhere. The `shim`/`simFiles` mechanism only requires C++ when
-the hardware side itself needs a *different* implementation than what's written in `main.ts` (e.g. a
-sensor needing low-level native access); since our hardware implementation is the same ordinary TypeScript
-either way, the plain body serves as the real hardware code, and `simFiles` only supplies an alternate
-implementation for the browser.
+Everything prints through plain `console.log()` (visible in the browser's DevTools console), which is
+simpler than routing through `serial.writeLine`/the Console-data view and has been sufficient for
+day-to-day testing.
+
+This is plain TypeScript - no native C++ anywhere, and no `shim`/`simFiles` mechanism. That route was
+explored early on but abandoned: a `//% shim=...` annotation's plain TypeScript body is actually the
+*simulator* implementation, with the shim target itself resolving to native C++ code on real hardware -
+not a fit for an extension that's deliberately pure TypeScript on both sides. The runtime check in
+`unitBldcLog.ts` does the same job without requiring any native code.
 
 ## Usage
 
-```blocks
+```
 let leftMotor = unitBldc.connect(0x65)
 let rightMotor = unitBldc.connect(0x6A)
 
@@ -113,8 +125,8 @@ firmware-update-only operation not meant for normal block programs.
 - `getPID(float*, float*, float*)` returned three values by pointer in C++. The block version returns a
   `number[]` array `[Kp, Ki, Kd]`, plus three small convenience blocks (`PID Kp`/`Ki`/`Kd`) for reading
   back a single term.
-- Mock mode (see above) is new behavior not present in the original driver, added so the extension is
-  usable in the browser simulator without real hardware attached.
+- The simulator support described above is new behavior not present in the original driver, added so
+  the extension is usable in the browser simulator without real hardware attached.
 
 ## License
 
@@ -122,4 +134,4 @@ MIT
 
 ## Supported targets
 
-* for PXT/microbit
+- for PXT/microbit

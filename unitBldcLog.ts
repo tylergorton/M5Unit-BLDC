@@ -11,15 +11,21 @@ namespace unitBldcLog {
         private moniker: string
 
         /**
-         * @param monikeal  onto every log line from this
-         * instance, e.g. "Motor 101", so multiple instances' output stays easy
-         * to tell apart in the Console/data view.
+         * @param moniker Appended onto every log line from this instance, e.g.
+         * "Motor 101", so multiple instances' output stays easy to tell apart
+         * in the Console/data view.
          */
         constructor(moniker: string = "") {
             this.moniker = moniker
             this.suppressed = control.deviceName() === "sim-"
         }
 
+        /**
+         * Internal print helper shared by msg()/set()/get()/reportState() below -
+         * not the same thing as the public msg() method, despite the similar
+         * name; this one just formats and writes a line, with no simulator
+         * check or return-value convention of its own.
+         */
         private log(msg: string): void {
             console.log(this.moniker ? this.moniker + ": " + msg : msg)
         }
@@ -34,10 +40,13 @@ namespace unitBldcLog {
 
         /**
          * Log a one-off text message not tied to any single stored key (e.g. an
-         * address change, a flash save, a bootloader jump). Only actually
-         * prints when running in the simulator. Returns true when logging IS
-         * active (i.e. we're in the simulator), so a caller can use the return
-         * value as an early-exit guard:
+         * address change, a flash save, a bootloader jump), or serve as a plain
+         * environment probe when a caller just wants to know if it's in the
+         * simulator (see getPID()/getMotorStatus() in main.ts, which call this
+         * for its return value rather than for the message itself). Only
+         * actually prints when running in the simulator. Returns true when
+         * logging IS active (i.e. we're in the simulator), so a caller can use
+         * the return value as an early-exit guard:
          * if (this.log.msg("...")) return
          * <real I2C call, only reached when NOT in the simulator>
          */
@@ -50,7 +59,7 @@ namespace unitBldcLog {
         /**
          * Set a named state value. Only actually prints when running in the
          * simulator, but the value itself is stored either way. Returns true
-         * when logging IS active, same as log() above, so a setter can write:
+         * when logging IS active, same as msg() above, so a setter can write:
          * if (this.log.set(key, value)) return
          * <real I2C write, only reached when NOT in the simulator>
          */
@@ -71,7 +80,6 @@ namespace unitBldcLog {
          */
         get(key: string, fallback: any): any {
             if (this.suppressed) return undefined
-            
             if (this.state[key] !== undefined) {
                 let val = this.state[key]
                 this.log(`[GET] ${key} => ${val}`)
@@ -81,6 +89,10 @@ namespace unitBldcLog {
             return fallback
         }
 
+        /**
+         * Print every stored key/value pair for this motor, for debugging in the
+         * simulator. No-op on real hardware.
+         */
         reportState(): void {
             if (this.suppressed) return
             this.log("=== STATE REPORT ===")

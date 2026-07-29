@@ -10,31 +10,31 @@
  * (each with its own I2C address) can be controlled independently on the same bus.
  *
  * SIMULATOR SUPPORT: uses unitBldcLog.ts (see that file), not shim/simFiles.
- * Each BldcMotor owns its own private unitBldcLog.InstanceLog (this.log), so
+ * Each BldcMotor owns its own private unitBldcLog.Logger (this.log), so
  * simulator-only state is genuinely encapsulated per motor - no shared
  * dictionary between motors (no address-prefixed keys needed), and no shared
  * global namespace state that another extension's own code could ever collide
  * with (this replaced an earlier design using one shared namespace-level
  * dictionary with address-prefixed keys, after a suspected collision with
  * another extension's identically-named namespace). All logging goes through
- * this.log's three methods: this.log.set(key, value) and this.log.log(message)
+ * this.log's three methods: this.log.set(key, value) and this.log.msg(message)
  * both return true when logging IS active (i.e. we're in the simulator), so
  * every setter and action method reads as an early-return guard:
  * if (this.log.set(key, val)) return - the real I2C lines below only run when
- * NOT in the simulator. log(message) covers the handful of action messages not
+ * NOT in the simulator. msg(message) covers the handful of action messages not
  * tied to any single stored key (address changes, flash saves, bootloader
  * jumps). Getters use this.log.get(key, fallback) instead, which returns
  * undefined outright when not in the simulator (meaning "go do the real I2C
  * read"), or the logged value/fallback when it is - a single ternary then
  * flows from key value, to fallback value, to real read. A few methods
- * without a natural dedicated key (the composite getters like frequency
- * readback) reuse an existing key purely as an environment probe, rather than
- * duplicating a key just to ask "am I in the simulator".
+ * without a natural dedicated key (getPID, getMotorStatus) reuse msg() itself
+ * purely as an environment probe - calling it for its true/false return value
+ * (and incidental log line) rather than to store or retrieve any particular
+ * key, since there's no single state key that naturally represents "PID
+ * values" or "motor status" as a whole.
  */
-
 //% color="#AA278D" icon="\uf085" block="Unit BLDC" weight=100
 namespace unitBldc {
-
     const DEFAULT_ADDR = 0x65
 
     const REG_MODE = 0x00
@@ -331,7 +331,12 @@ namespace unitBldc {
         }
 
         /**
-         * Get the current PID parameters as an array: [Kp, Ki, Kd].
+         * Get the current PID parameters as an array: [Kp, Ki, Kd]. There's no
+         * single stored key for "all three PID terms at once", so this calls
+         * this.log.msg(...) purely as an environment probe (simulator vs real
+         * hardware) rather than as a key lookup, then defers to the individual
+         * getKp()/getKi()/getKd() getters (each of which does use a dedicated key)
+         * when in the simulator.
          */
         //% blockId=unitbldc_get_pid
         //% block="%motor|PID values"
@@ -387,7 +392,10 @@ namespace unitBldc {
 
         /**
          * Get the current motor status. In the simulator this is derived from
-         * whether a nonzero PWM duty or target RPM is currently set.
+         * whether a nonzero PWM duty or target RPM is currently set - there's no
+         * dedicated "status" key, so this.log.msg(...) is used purely as an
+         * environment probe (simulator vs real hardware), the same trick getPID()
+         * uses above.
          */
         //% blockId=unitbldc_get_motor_status
         //% block="%motor|status"
