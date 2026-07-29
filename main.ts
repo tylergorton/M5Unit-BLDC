@@ -9,15 +9,15 @@
  * Each physical Unit BLDC is represented as a BldcMotor object, so multiple motors
  * (each with its own I2C address) can be controlled independently on the same bus.
  *
- * SIMULATOR SUPPORT: every hardware-facing operation below is a small module-level
- * function marked //% shim=unitBldcSim::xxx. On a real board that annotation has
- * no effect - the plain TypeScript body right below it runs, doing a real I2C
- * transaction exactly as you'd expect. In the browser simulator, MakeCode instead
- * runs the alternate implementation registered in simulator.ts (only ever
- * compiled into the simulator bundle, via pxt.json's "simFiles"), which keeps its
- * own shadow state per address and drives a small animated widget. No native C++
- * is used anywhere - that's why the bodies below are the real, working hardware
- * implementation rather than placeholders.
+ * SIMULATOR SUPPORT: uses logging.ts (see that file) instead of shim/simFiles.
+ * Every setter does the real I2C write AND calls logging.log(key, value), which
+ * only actually prints when running in the simulator (logging.ts detects this via
+ * control.deviceDalVersion() === ""). "Setting" getters (mode, direction, PWM,
+ * target RPM, PID, motor model, pole pairs) just return logging.log(key) - the
+ * last value set - rather than re-reading hardware, so there's no environment
+ * branching anywhere in this file. True sensor readbacks (RPM/frequency readback,
+ * motor status, firmware version) always do a real I2C read, since they reflect
+ * the device's own behavior rather than something we set.
  */
 
 //% color="#AA278D" icon="\uf085" block="Unit BLDC" weight=100
@@ -77,179 +77,6 @@ namespace unitBldc {
         return v
     }
 
-    // ---- Low level I2C helpers (used by the shimmed functions below) ----
-
-    function writeBytes(address: number, reg: number, data: number[]): boolean {
-        let out = pins.createBuffer(data.length + 1)
-        out.setNumber(NumberFormat.UInt8LE, 0, reg)
-        for (let i = 0; i < data.length; i++) {
-            out.setNumber(NumberFormat.UInt8LE, i + 1, data[i])
-        }
-        return pins.i2cWriteBuffer(address, out, false) == 0
-    }
-
-    function writeFloat(address: number, reg: number, value: number): boolean {
-        let out = pins.createBuffer(5)
-        out.setNumber(NumberFormat.UInt8LE, 0, reg)
-        out.setNumber(NumberFormat.Float32LE, 1, value)
-        return pins.i2cWriteBuffer(address, out, false) == 0
-    }
-
-    function readBytes(address: number, reg: number, length: number): Buffer {
-        pins.i2cWriteBuffer(address, pins.createBufferFromArray([reg]), true)
-        return pins.i2cReadBuffer(address, length, false)
-    }
-
-    function readFloat(address: number, reg: number): number {
-        return readBytes(address, reg, 4).getNumber(NumberFormat.Float32LE, 0)
-    }
-
-    function bufferToString(buf: Buffer): string {
-        let s = ""
-        for (let i = 0; i < buf.length; i++) {
-            let c = buf.getNumber(NumberFormat.UInt8LE, i)
-            if (c == 0) break
-            s += String.fromCharCode(c)
-        }
-        return s
-    }
-
-    // ---- Shimmed hardware operations ----
-    // Real I2C on a physical board (the body below). Overridden by
-    // sim/simulator.ts when running in the browser simulator.
-
-    //% shim=unitBldcSim::isConnected
-    function hwIsConnected(address: number): boolean {
-        return pins.i2cWriteBuffer(address, pins.createBuffer(0), false) == 0
-    }
-
-    //% shim=unitBldcSim::setMode
-    function hwSetMode(address: number, mode: number): void {
-        writeBytes(address, REG_MODE, [mode])
-    }
-
-    //% shim=unitBldcSim::getMode
-    function hwGetMode(address: number): number {
-        return readBytes(address, REG_MODE, 1).getNumber(NumberFormat.UInt8LE, 0)
-    }
-
-    //% shim=unitBldcSim::setDirection
-    function hwSetDirection(address: number, dir: number): void {
-        writeBytes(address, REG_DIR, [dir])
-    }
-
-    //% shim=unitBldcSim::getDirection
-    function hwGetDirection(address: number): number {
-        return readBytes(address, REG_DIR, 1).getNumber(NumberFormat.UInt8LE, 0)
-    }
-
-    //% shim=unitBldcSim::setPWM
-    function hwSetPWM(address: number, duty: number): void {
-        let out = pins.createBuffer(3)
-        out.setNumber(NumberFormat.UInt8LE, 0, REG_PWM)
-        out.setNumber(NumberFormat.UInt16LE, 1, duty)
-        pins.i2cWriteBuffer(address, out, false)
-    }
-
-    //% shim=unitBldcSim::getPWM
-    function hwGetPWM(address: number): number {
-        return readBytes(address, REG_PWM, 2).getNumber(NumberFormat.UInt16LE, 0)
-    }
-
-    //% shim=unitBldcSim::setRPM
-    function hwSetRPM(address: number, rpm: number): void {
-        writeFloat(address, REG_SET_RPM, rpm)
-    }
-
-    //% shim=unitBldcSim::getRPM
-    function hwGetRPM(address: number): number {
-        return readFloat(address, REG_SET_RPM)
-    }
-
-    //% shim=unitBldcSim::getRpmReadback
-    function hwGetRpmReadback(address: number): number {
-        return readFloat(address, REG_READBACK_RPM)
-    }
-
-    //% shim=unitBldcSim::getFreqReadback
-    function hwGetFreqReadback(address: number): number {
-        return readFloat(address, REG_READBACK_FREQ)
-    }
-
-    //% shim=unitBldcSim::getRpmReadbackString
-    function hwGetRpmReadbackString(address: number): string {
-        return bufferToString(readBytes(address, REG_READBACK_RPM_STRING, 16))
-    }
-
-    //% shim=unitBldcSim::getFreqReadbackString
-    function hwGetFreqReadbackString(address: number): string {
-        return bufferToString(readBytes(address, REG_READBACK_FREQ_STRING, 16))
-    }
-
-    //% shim=unitBldcSim::setPID
-    function hwSetPID(address: number, p: number, i: number, d: number): void {
-        let out = pins.createBuffer(13)
-        out.setNumber(NumberFormat.UInt8LE, 0, REG_PID)
-        out.setNumber(NumberFormat.Int32LE, 1, Math.round(p * 100))
-        out.setNumber(NumberFormat.Int32LE, 5, Math.round(i * 100))
-        out.setNumber(NumberFormat.Int32LE, 9, Math.round(d * 100))
-        pins.i2cWriteBuffer(address, out, false)
-    }
-
-    //% shim=unitBldcSim::getPID
-    function hwGetPID(address: number): number[] {
-        let buf = readBytes(address, REG_PID, 12)
-        let p = buf.getNumber(NumberFormat.Int32LE, 0) / 100.0
-        let i = buf.getNumber(NumberFormat.Int32LE, 4) / 100.0
-        let d = buf.getNumber(NumberFormat.Int32LE, 8) / 100.0
-        return [p, i, d]
-    }
-
-    //% shim=unitBldcSim::getMotorStatus
-    function hwGetMotorStatus(address: number): number {
-        return readBytes(address, REG_MOTOR_STATUS, 1).getNumber(NumberFormat.UInt8LE, 0)
-    }
-
-    //% shim=unitBldcSim::setMotorModel
-    function hwSetMotorModel(address: number, model: number): void {
-        writeBytes(address, REG_MOTOR_CONFIG, [model])
-    }
-
-    //% shim=unitBldcSim::getMotorModel
-    function hwGetMotorModel(address: number): number {
-        return readBytes(address, REG_MOTOR_CONFIG, 1).getNumber(NumberFormat.UInt8LE, 0)
-    }
-
-    //% shim=unitBldcSim::setMotorPolePairs
-    function hwSetMotorPolePairs(address: number, pairs: number): void {
-        writeBytes(address, REG_MOTOR_CONFIG + 1, [pairs])
-    }
-
-    //% shim=unitBldcSim::getMotorPolePairs
-    function hwGetMotorPolePairs(address: number): number {
-        return readBytes(address, REG_MOTOR_CONFIG + 1, 1).getNumber(NumberFormat.UInt8LE, 0)
-    }
-
-    //% shim=unitBldcSim::saveMotorDataToFlash
-    function hwSaveMotorDataToFlash(address: number): void {
-        writeBytes(address, REG_SAVE_TO_FLASH, [1])
-    }
-
-    //% shim=unitBldcSim::getFirmwareVersion
-    function hwGetFirmwareVersion(address: number): number {
-        return readBytes(address, REG_FIRMWARE_VERSION, 1).getNumber(NumberFormat.UInt8LE, 0)
-    }
-
-    //% shim=unitBldcSim::setI2CAddress
-    function hwSetI2CAddress(address: number, newAddr: number): boolean {
-        return writeBytes(address, REG_I2C_ADDRESS, [newAddr])
-    }
-
-    //% shim=unitBldcSim::jumpBootloader
-    function hwJumpBootloader(address: number): void {
-        writeBytes(address, REG_JUMP_BOOTLOADER, [1])
-    }
-
     /**
      * A single Unit BLDC motor, identified by its I2C address. Create one instance
      * per physical motor unit on the bus (see unitBldc.connect).
@@ -261,6 +88,47 @@ namespace unitBldc {
             this.address = addr
         }
 
+        // Per-motor key prefix, so two motors on the same bus don't collide in
+        // logging.ts's shared state dictionary.
+        private key(field: string): string {
+            return this.address + ":" + field
+        }
+
+        private writeBytes(reg: number, data: number[]): boolean {
+            let out = pins.createBuffer(data.length + 1)
+            out.setNumber(NumberFormat.UInt8LE, 0, reg)
+            for (let i = 0; i < data.length; i++) {
+                out.setNumber(NumberFormat.UInt8LE, i + 1, data[i])
+            }
+            return pins.i2cWriteBuffer(this.address, out, false) == 0
+        }
+
+        private writeFloat(reg: number, value: number): boolean {
+            let out = pins.createBuffer(5)
+            out.setNumber(NumberFormat.UInt8LE, 0, reg)
+            out.setNumber(NumberFormat.Float32LE, 1, value)
+            return pins.i2cWriteBuffer(this.address, out, false) == 0
+        }
+
+        private readBytes(reg: number, length: number): Buffer {
+            pins.i2cWriteBuffer(this.address, pins.createBufferFromArray([reg]), true)
+            return pins.i2cReadBuffer(this.address, length, false)
+        }
+
+        private readFloat(reg: number): number {
+            return this.readBytes(reg, 4).getNumber(NumberFormat.Float32LE, 0)
+        }
+
+        private bufferToString(buf: Buffer): string {
+            let s = ""
+            for (let i = 0; i < buf.length; i++) {
+                let c = buf.getNumber(NumberFormat.UInt8LE, i)
+                if (c == 0) break
+                s += String.fromCharCode(c)
+            }
+            return s
+        }
+
         /**
          * Test whether this motor responds on the I2C bus at its current address.
          */
@@ -269,7 +137,7 @@ namespace unitBldc {
         //% weight=100
         //% group="Setup"
         isConnected(): boolean {
-            return hwIsConnected(this.address)
+            return pins.i2cWriteBuffer(this.address, pins.createBuffer(0), false) == 0
         }
 
         /**
@@ -280,7 +148,8 @@ namespace unitBldc {
         //% weight=95
         //% group="Motor Control"
         setMode(mode: BldcMode): void {
-            hwSetMode(this.address, mode)
+            this.writeBytes(REG_MODE, [mode])
+            logging.log(this.key("mode"), mode)
         }
 
         /**
@@ -291,7 +160,7 @@ namespace unitBldc {
         //% weight=94
         //% group="Motor Control"
         getMode(): BldcMode {
-            return hwGetMode(this.address) as BldcMode
+            return (logging.log(this.key("mode")) || BldcMode.OpenLoop) as BldcMode
         }
 
         /**
@@ -302,7 +171,8 @@ namespace unitBldc {
         //% weight=93
         //% group="Motor Control"
         setDirection(dir: BldcDirection): void {
-            hwSetDirection(this.address, dir)
+            this.writeBytes(REG_DIR, [dir])
+            logging.log(this.key("direction"), dir)
         }
 
         /**
@@ -313,7 +183,7 @@ namespace unitBldc {
         //% weight=92
         //% group="Motor Control"
         getDirection(): BldcDirection {
-            return hwGetDirection(this.address) as BldcDirection
+            return (logging.log(this.key("direction")) || BldcDirection.Forward) as BldcDirection
         }
 
         /**
@@ -326,7 +196,12 @@ namespace unitBldc {
         //% weight=90
         //% group="Motor Control"
         setPWM(duty: number): void {
-            hwSetPWM(this.address, clamp(0, 2047, duty))
+            duty = clamp(0, 2047, duty)
+            let out = pins.createBuffer(3)
+            out.setNumber(NumberFormat.UInt8LE, 0, REG_PWM)
+            out.setNumber(NumberFormat.UInt16LE, 1, duty)
+            pins.i2cWriteBuffer(this.address, out, false)
+            logging.log(this.key("pwm"), duty)
         }
 
         /**
@@ -337,7 +212,7 @@ namespace unitBldc {
         //% weight=89
         //% group="Motor Control"
         getPWM(): number {
-            return hwGetPWM(this.address)
+            return logging.log(this.key("pwm")) || 0
         }
 
         /**
@@ -349,7 +224,8 @@ namespace unitBldc {
         //% weight=88
         //% group="Motor Control"
         setRPM(rpm: number): void {
-            hwSetRPM(this.address, rpm)
+            this.writeFloat(REG_SET_RPM, rpm)
+            logging.log(this.key("rpm"), rpm)
         }
 
         /**
@@ -360,29 +236,31 @@ namespace unitBldc {
         //% weight=87
         //% group="Motor Control"
         getRPM(): number {
-            return hwGetRPM(this.address)
+            return logging.log(this.key("rpm")) || 0
         }
 
         /**
-         * Get the real time RPM readback from the motor.
+         * Get the real time RPM readback from the motor. Always a real I2C read -
+         * this reflects the device's own measured speed, not something we set.
          */
         //% blockId=unitbldc_get_rpm_readback
         //% block="%motor|RPM readback"
         //% weight=86
         //% group="Readings"
         getRpmReadback(): number {
-            return hwGetRpmReadback(this.address)
+            return this.readFloat(REG_READBACK_RPM)
         }
 
         /**
-         * Get the real time frequency readback from the motor (Hz).
+         * Get the real time frequency readback from the motor (Hz). Always a real
+         * I2C read - this reflects the device's own measurement.
          */
         //% blockId=unitbldc_get_freq_readback
         //% block="%motor|frequency readback (Hz)"
         //% weight=85
         //% group="Readings"
         getFreqReadback(): number {
-            return hwGetFreqReadback(this.address)
+            return this.readFloat(REG_READBACK_FREQ)
         }
 
         /**
@@ -393,7 +271,7 @@ namespace unitBldc {
         //% weight=84
         //% group="Readings"
         getRpmReadbackString(): string {
-            return hwGetRpmReadbackString(this.address)
+            return this.bufferToString(this.readBytes(REG_READBACK_RPM_STRING, 16))
         }
 
         /**
@@ -404,7 +282,7 @@ namespace unitBldc {
         //% weight=83
         //% group="Readings"
         getFreqReadbackString(): string {
-            return hwGetFreqReadbackString(this.address)
+            return this.bufferToString(this.readBytes(REG_READBACK_FREQ_STRING, 16))
         }
 
         /**
@@ -417,7 +295,15 @@ namespace unitBldc {
         //% weight=80
         //% group="PID Tuning"
         setPID(p: number, i: number, d: number): void {
-            hwSetPID(this.address, p, i, d)
+            let out = pins.createBuffer(13)
+            out.setNumber(NumberFormat.UInt8LE, 0, REG_PID)
+            out.setNumber(NumberFormat.Int32LE, 1, Math.round(p * 100))
+            out.setNumber(NumberFormat.Int32LE, 5, Math.round(i * 100))
+            out.setNumber(NumberFormat.Int32LE, 9, Math.round(d * 100))
+            pins.i2cWriteBuffer(this.address, out, false)
+            logging.log(this.key("pid_p"), p)
+            logging.log(this.key("pid_i"), i)
+            logging.log(this.key("pid_d"), d)
         }
 
         /**
@@ -428,7 +314,7 @@ namespace unitBldc {
         //% weight=79
         //% group="PID Tuning"
         getPID(): number[] {
-            return hwGetPID(this.address)
+            return [this.getKp(), this.getKi(), this.getKd()]
         }
 
         /**
@@ -440,7 +326,7 @@ namespace unitBldc {
         //% weight=78
         //% group="PID Tuning"
         getKp(): number {
-            return this.getPID()[0]
+            return logging.log(this.key("pid_p")) || 0
         }
 
         /**
@@ -452,7 +338,7 @@ namespace unitBldc {
         //% weight=77
         //% group="PID Tuning"
         getKi(): number {
-            return this.getPID()[1]
+            return logging.log(this.key("pid_i")) || 0
         }
 
         /**
@@ -464,18 +350,18 @@ namespace unitBldc {
         //% weight=76
         //% group="PID Tuning"
         getKd(): number {
-            return this.getPID()[2]
+            return logging.log(this.key("pid_d")) || 0
         }
 
         /**
-         * Get the current motor status.
+         * Get the current motor status. Always a real I2C read.
          */
         //% blockId=unitbldc_get_motor_status
         //% block="%motor|status"
         //% weight=75
         //% group="Readings"
         getMotorStatus(): BldcMotorStatus {
-            return hwGetMotorStatus(this.address) as BldcMotorStatus
+            return this.readBytes(REG_MOTOR_STATUS, 1).getNumber(NumberFormat.UInt8LE, 0) as BldcMotorStatus
         }
 
         /**
@@ -486,7 +372,8 @@ namespace unitBldc {
         //% weight=70
         //% group="Configuration"
         setMotorModel(model: BldcMotorModel): void {
-            hwSetMotorModel(this.address, model)
+            this.writeBytes(REG_MOTOR_CONFIG, [model])
+            logging.log(this.key("motorModel"), model)
         }
 
         /**
@@ -497,7 +384,7 @@ namespace unitBldc {
         //% weight=69
         //% group="Configuration"
         getMotorModel(): BldcMotorModel {
-            return hwGetMotorModel(this.address) as BldcMotorModel
+            return (logging.log(this.key("motorModel")) || BldcMotorModel.LowSpeed) as BldcMotorModel
         }
 
         /**
@@ -510,7 +397,8 @@ namespace unitBldc {
         //% weight=68
         //% group="Configuration"
         setMotorPolePairs(pairs: number): void {
-            hwSetMotorPolePairs(this.address, pairs)
+            this.writeBytes(REG_MOTOR_CONFIG + 1, [pairs])
+            logging.log(this.key("polePairs"), pairs)
         }
 
         /**
@@ -521,7 +409,7 @@ namespace unitBldc {
         //% weight=67
         //% group="Configuration"
         getMotorPolePairs(): number {
-            return hwGetMotorPolePairs(this.address)
+            return logging.log(this.key("polePairs")) || 0
         }
 
         /**
@@ -533,18 +421,19 @@ namespace unitBldc {
         //% weight=60
         //% group="Configuration"
         saveMotorDataToFlash(): void {
-            hwSaveMotorDataToFlash(this.address)
+            this.writeBytes(REG_SAVE_TO_FLASH, [1])
+            logging.log("config save to flash requested for " + this.address)
         }
 
         /**
-         * Get the firmware version of this Unit BLDC.
+         * Get the firmware version of this Unit BLDC. Always a real I2C read.
          */
         //% blockId=unitbldc_get_firmware_version
         //% block="%motor|firmware version"
         //% weight=50
         //% group="Setup"
         getFirmwareVersion(): number {
-            return hwGetFirmwareVersion(this.address)
+            return this.readBytes(REG_FIRMWARE_VERSION, 1).getNumber(NumberFormat.UInt8LE, 0)
         }
 
         /**
@@ -559,8 +448,9 @@ namespace unitBldc {
         //% weight=40
         //% group="Setup"
         setI2CAddress(addr: number): boolean {
-            let ok = hwSetI2CAddress(this.address, addr)
+            let ok = this.writeBytes(REG_I2C_ADDRESS, [addr])
             if (ok) {
+                logging.log("I2C address changed from " + this.address + " to " + addr)
                 this.address = addr
             }
             return ok
@@ -571,7 +461,7 @@ namespace unitBldc {
          * call via JavaScript if needed: motor.jumpBootloader()
          */
         jumpBootloader(): void {
-            hwJumpBootloader(this.address)
+            this.writeBytes(REG_JUMP_BOOTLOADER, [1])
         }
     }
 

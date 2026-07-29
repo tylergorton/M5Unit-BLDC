@@ -13,7 +13,6 @@ namespace logging {
     export function log(message: string): void
     export function log(key: string, value: any): void
     export function log(key: string): any
-
     export function log(arg1: string, arg2?: any): any {
         if (arg2 === undefined && !(arg1 in state)) {
             simLog(`[DEBUG] ${arg1}`)
@@ -37,4 +36,3 @@ namespace logging {
         simLog("========================")
     }
 }
-
