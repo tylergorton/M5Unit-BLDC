@@ -10,18 +10,18 @@
  * (each with its own I2C address) can be controlled independently on the same bus.
  *
  * SIMULATOR SUPPORT: uses unitBldcLog.ts (see that file), not shim/simFiles.
- * Each BldcMotor owns its own private unitBldcLog.InstanceLog (this.log), so
+ * Each BldcMotor owns its own private unitBldcLog.Logger (this.log), so
  * simulator-only state is genuinely encapsulated per motor - no shared
  * dictionary between motors (no address-prefixed keys needed), and no shared
  * global namespace state that another extension's own code could ever collide
  * with (this replaced an earlier design using one shared namespace-level
  * dictionary with address-prefixed keys, after a suspected collision with
  * another extension's identically-named namespace). All logging goes through
- * this.log's three methods: this.log.set(key, value) and this.log.log(message)
+ * this.log's three methods: this.log.set(key, value) and this.log.msg(message)
  * both return true when logging IS active (i.e. we're in the simulator), so
  * every setter and action method reads as an early-return guard:
  * if (this.log.set(key, val)) return - the real I2C lines below only run when
- * NOT in the simulator. log(message) covers the handful of action messages not
+ * NOT in the simulator. msg(message) covers the handful of action messages not
  * tied to any single stored key (address changes, flash saves, bootloader
  * jumps). Getters use this.log.get(key, fallback) instead, which returns
  * undefined outright when not in the simulator (meaning "go do the real I2C
@@ -105,6 +105,10 @@ namespace unitBldc {
     export class BldcMotor {
         private address: number
         private log: unitBldcLog.Logger
+        // Result of the most recent real I2C write on this motor. Starts true
+        // (nothing has failed yet); simulator writes are always treated as
+        // successful. Not exposed as a block - see wasLastWriteSuccessful().
+        private lastWriteOk: boolean = true
 
         constructor(addr: number) {
             this.address = addr
@@ -117,14 +121,16 @@ namespace unitBldc {
             for (let i = 0; i < data.length; i++) {
                 out.setNumber(NumberFormat.UInt8LE, i + 1, data[i])
             }
-            return pins.i2cWriteBuffer(this.address, out, false) == 0
+            this.lastWriteOk = pins.i2cWriteBuffer(this.address, out, false) == 0
+            return this.lastWriteOk
         }
 
         private writeFloat(reg: number, value: number): boolean {
             let out = pins.createBuffer(5)
             out.setNumber(NumberFormat.UInt8LE, 0, reg)
             out.setNumber(NumberFormat.Float32LE, 1, value)
-            return pins.i2cWriteBuffer(this.address, out, false) == 0
+            this.lastWriteOk = pins.i2cWriteBuffer(this.address, out, false) == 0
+            return this.lastWriteOk
         }
 
         /**
@@ -185,7 +191,10 @@ namespace unitBldc {
         //% weight=95
         //% group="Motor Control"
         setMode(mode: BldcMode): void {
-            if (this.log.set("mode", mode) && this.log.set("pwm", 0) && this.log.set("rpm", 0)) return
+            if (this.log.set("mode", mode) && this.log.set("pwm", 0) && this.log.set("rpm", 0)) {
+                this.lastWriteOk = true
+                return
+            }
             this.writeBytes(REG_MODE, [mode])
         }
 
@@ -211,7 +220,10 @@ namespace unitBldc {
         //% weight=93
         //% group="Motor Control"
         setDirection(dir: BldcDirection): void {
-            if (this.log.set("direction", dir)) return
+            if (this.log.set("direction", dir)) {
+                this.lastWriteOk = true
+                return
+            }
             this.writeBytes(REG_DIR, [dir])
         }
 
@@ -240,11 +252,14 @@ namespace unitBldc {
         //% group="Motor Control"
         setPWM(duty: number): void {
             duty = clamp(0, 2047, duty)
-            if (this.log.set("pwm", duty)) return
+            if (this.log.set("pwm", duty)) {
+                this.lastWriteOk = true
+                return
+            }
             let out = pins.createBuffer(3)
             out.setNumber(NumberFormat.UInt8LE, 0, REG_PWM)
             out.setNumber(NumberFormat.UInt16LE, 1, duty)
-            pins.i2cWriteBuffer(this.address, out, false)
+            this.lastWriteOk = pins.i2cWriteBuffer(this.address, out, false) == 0
         }
 
         /**
@@ -270,7 +285,10 @@ namespace unitBldc {
         //% weight=88
         //% group="Motor Control"
         setRPM(rpm: number): void {
-            if (this.log.set("rpm", rpm)) return
+            if (this.log.set("rpm", rpm)) {
+                this.lastWriteOk = true
+                return
+            }
             this.writeFloat(REG_SET_RPM, rpm)
         }
 
@@ -366,13 +384,16 @@ namespace unitBldc {
         //% weight=80
         //% group="PID Tuning"
         setPID(p: number, i: number, d: number): void {
-            if (this.log.set("pid_p", p) && this.log.set("pid_i", i) && this.log.set("pid_d", d)) return
+            if (this.log.set("pid_p", p) && this.log.set("pid_i", i) && this.log.set("pid_d", d)) {
+                this.lastWriteOk = true
+                return
+            }
             let out = pins.createBuffer(13)
             out.setNumber(NumberFormat.UInt8LE, 0, REG_PID)
             out.setNumber(NumberFormat.Int32LE, 1, Math.trunc(p * 100))
             out.setNumber(NumberFormat.Int32LE, 5, Math.trunc(i * 100))
             out.setNumber(NumberFormat.Int32LE, 9, Math.trunc(d * 100))
-            pins.i2cWriteBuffer(this.address, out, false)
+            this.lastWriteOk = pins.i2cWriteBuffer(this.address, out, false) == 0
         }
 
         /**
@@ -459,7 +480,10 @@ namespace unitBldc {
         //% weight=70
         //% group="Configuration"
         setMotorModel(model: BldcMotorModel): void {
-            if (this.log.set("motorModel", model)) return
+            if (this.log.set("motorModel", model)) {
+                this.lastWriteOk = true
+                return
+            }
             this.writeBytes(REG_MOTOR_CONFIG, [model])
         }
 
@@ -487,7 +511,10 @@ namespace unitBldc {
         //% weight=68
         //% group="Configuration"
         setMotorPolePairs(pairs: number): void {
-            if (this.log.set("polePairs", pairs)) return
+            if (this.log.set("polePairs", pairs)) {
+                this.lastWriteOk = true
+                return
+            }
             this.writeBytes(REG_MOTOR_CONFIG + 1, [pairs])
         }
 
@@ -514,7 +541,10 @@ namespace unitBldc {
         //% weight=60
         //% group="Configuration"
         saveMotorDataToFlash(): void {
-            if (this.log.msg("config saved to flash")) return
+            if (this.log.msg("config saved to flash")) {
+                this.lastWriteOk = true
+                return
+            }
             this.writeBytes(REG_SAVE_TO_FLASH, [1])
         }
 
@@ -547,6 +577,7 @@ namespace unitBldc {
             if (this.log.msg("I2C address changed to " + addr)) {
                 this.address = addr
                 this.log.setMoniker("Motor " + addr)
+                this.lastWriteOk = true
                 return true
             }
             let ok = this.writeBytes(REG_I2C_ADDRESS, [addr])
@@ -562,8 +593,24 @@ namespace unitBldc {
          * call via JavaScript if needed: motor.jumpBootloader()
          */
         jumpBootloader(): void {
-            if (this.log.msg("bootloader jump")) return
+            if (this.log.msg("bootloader jump")) {
+                this.lastWriteOk = true
+                return
+            }
             this.writeBytes(REG_JUMP_BOOTLOADER, [1])
+        }
+
+        /**
+         * Whether the most recent register write on this motor (from any of the
+         * set* methods, saveMotorDataToFlash(), or jumpBootloader()) succeeded.
+         * Not exposed as a block on purpose: the individual setters stay void so
+         * they keep their existing drag-in-sequence "action" shape in the block
+         * editor rather than becoming value/reporter blocks. Call this from
+         * JavaScript after a write if you want to detect and react to an I2C
+         * failure (e.g. retry, or fall back to a cached value).
+         */
+        wasLastWriteSuccessful(): boolean {
+            return this.lastWriteOk
         }
     }
 
